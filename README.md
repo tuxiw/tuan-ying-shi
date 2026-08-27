@@ -3,7 +3,6 @@
 聚合追番 · 在线播放 · 离线下载 的安卓影视 App。
 
 > ⚠️ 本项目**不开源**，本仓库仅用于**应用下载与使用**。
-> 源代码仓库：[fs529/tuan-ying-shi-app](https://gitee.com/fs529/tuan-ying-shi-app)
 
 ---
 
