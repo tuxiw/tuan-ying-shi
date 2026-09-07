@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://tuanyingshi.tuxiwan.cn/</loc>
+    <lastmod>2026-09-05</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://tuanyingshi.tuxiwan.cn/assets/Pad_home.png</image:loc>
+      <image:title>团影视平板端首页界面</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://tuanyingshi.tuxiwan.cn/assets/home.png</image:loc>
+      <image:title>团影视 App 首页推荐界面</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://tuanyingshi.tuxiwan.cn/assets/play.png</image:loc>
+      <image:title>团影视播放器界面</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://tuanyingshi.tuxiwan.cn/wechat-article.html</loc>
+    <lastmod>2026-09-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>

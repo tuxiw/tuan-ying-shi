@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>团影视 - 安卓动漫番剧播放与离线缓存 App | 官方下载 v0.5.1</title>
+<meta name="description" content="团影视（Tuanyingshi）是一款面向安卓的动漫番剧聚合播放客户端，聚合次元城等公开数据源，支持 HLS 在线播放、选集离线缓存、周更排期表、热门排行榜、弹幕与跨设备同步，并提供 universal / arm64-v8a / armeabi-v7a / x86_64 四种架构安装包官方下载。" />
+<meta name="keywords" content="团影视,团影视下载,安卓动漫App,番剧播放,追番软件,动漫离线缓存,次元城,番剧排期表,安卓影音客户端,tuanyingshi" />
+<meta name="author" content="团影视 Tuanyingshi" />
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+<meta name="theme-color" content="#0E0E12" />
+<meta name="baidu-site-verification" content="codeva-GqdiA1xiWG" />
+<meta name="msvalidate.01" content="8CF88407A0212EB7D2DF664CE6949ADD" />
+<link rel="canonical" href="https://tuanyingshi.tuxiwan.cn/" />
+<link rel="icon" type="image/png" href="assets/logo.png" />
+<link rel="apple-touch-icon" href="assets/logo.png" />
+
+<!-- Open Graph / 社交分享 -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="团影视" />
+<meta property="og:locale" content="zh_CN" />
+<meta property="og:title" content="团影视 - 安卓动漫番剧播放与离线缓存 App" />
+<meta property="og:description" content="聚合次元城等公开数据源，支持 HLS 在线播放、选集离线缓存、周更排期表、热门排行榜、弹幕与跨设备同步，四种架构安装包官方下载。" />
+<meta property="og:url" content="https://tuanyingshi.tuxiwan.cn/" />
+<meta property="og:image" content="https://tuanyingshi.tuxiwan.cn/assets/Pad_home.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="750" />
+<meta property="og:image:alt" content="团影视平板端首页界面" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="团影视 - 安卓动漫番剧播放与离线缓存 App" />
+<meta name="twitter:description" content="HLS 在线播放、选集离线缓存、排期表、排行榜、弹幕与跨设备同步，官方安装包下载。" />
+<meta name="twitter:image" content="https://tuanyingshi.tuxiwan.cn/assets/Pad_home.png" />
+
+<style>
+  :root {
+    --bg: #0E0E12;
+    --surface: #16161C;
+    --surface-2: #23232C;
+    --on-dark: #EDEDF2;
+    --muted: #9A9AA8;
+    --pink: #FF4D6D;
+    --purple: #9D7CE0;
+    --cyan: #7CD0E0;
+    --rating: #FFB020;
+    --grad: linear-gradient(120deg, #FF4D6D 0%, #9D7CE0 100%);
+    --grad-soft: linear-gradient(120deg, rgba(255,77,109,.16), rgba(157,124,224,.16));
+    --radius: 18px;
+    --maxw: 1080px;
+    --navh: 62px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+    background: transparent;
+    color: var(--on-dark);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; border-radius: 6px; }
+
+  /* ===== Nav ===== */
+  header.nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(14,14,18,.82);
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .nav-inner {
+    max-width: var(--maxw); margin: 0 auto; padding: 12px 22px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; letter-spacing: .5px; }
+  .brand img { width: 34px; height: 34px; border-radius: 9px; }
+  .brand .dot { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .nav-links { margin-left: auto; display: flex; align-items: center; gap: 20px; font-size: 14.5px; }
+  .nav-links a { color: var(--muted); transition: color .2s; white-space: nowrap; }
+  .nav-links a:hover, .nav-links a.active { color: var(--on-dark); }
+  .nav-links a.active { font-weight: 700; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 22px; border-radius: 999px; font-weight: 700; font-size: 15px;
+    cursor: pointer; border: none; transition: transform .15s ease, box-shadow .2s ease, opacity .2s;
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--grad); color: #fff; box-shadow: 0 8px 24px rgba(255,77,109,.32); }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(255,77,109,.42); }
+  .btn-ghost { background: var(--surface-2); color: var(--on-dark); border: 1px solid rgba(255,255,255,.08); }
+  .btn-ghost:hover { border-color: var(--pink); color: #fff; }
+
+  /* 移动端锚点导航：横向滚动，保证小屏导航同样清晰可达 */
+  .nav-scroll { display: none; border-top: 1px solid rgba(255,255,255,.06); }
+  .nav-scroll-inner {
+    max-width: var(--maxw); margin: 0 auto; padding: 0 14px;
+    display: flex; gap: 4px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav-scroll-inner::-webkit-scrollbar { display: none; }
+  .nav-scroll-inner a {
+    flex: 0 0 auto; padding: 10px 12px; font-size: 14px; color: var(--muted); white-space: nowrap;
+    border-bottom: 2px solid transparent;
+  }
+  .nav-scroll-inner a.active { color: var(--on-dark); border-bottom-color: var(--pink); font-weight: 700; }
+
+  /* ===== Hero ===== */
+  .hero {
+    position: relative; padding: 54px 22px 46px; text-align: center; overflow: hidden;
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: -30% -10% auto; height: 460px; z-index: 0;
+    background: radial-gradient(60% 60% at 50% 0%, rgba(255,77,109,.22), transparent 70%),
+                radial-gradient(50% 50% at 80% 10%, rgba(157,124,224,.20), transparent 70%);
+    filter: blur(10px);
+  }
+  .hero-inner { position: relative; z-index: 1; max-width: var(--maxw); margin: 0 auto; }
+  .hero .badge {
+    display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px;
+    background: var(--grad-soft); border: 1px solid rgba(255,255,255,.10); color: var(--on-dark);
+    font-size: 13px; margin-bottom: 18px;
+  }
+  .hero .badge .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 0 rgba(255,77,109,.6); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(255,77,109,.55)} 70%{box-shadow:0 0 0 12px rgba(255,77,109,0)} 100%{box-shadow:0 0 0 0 rgba(255,77,109,0)} }
+  .hero h1 { font-size: clamp(32px, 6vw, 58px); font-weight: 900; letter-spacing: 1px; line-height: 1.15; }
+  .hero h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.sub { margin: 16px auto 8px; max-width: 660px; font-size: clamp(15px, 2.2vw, 18px); color: var(--muted); }
+  .hero p.tip { font-size: 13px; color: var(--muted); opacity: .8; }
+  .hero .cta { margin-top: 26px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .arch-note { margin-top: 12px; font-size: 13px; color: var(--muted); }
+
+  /* ===== Section ===== */
+  section { max-width: var(--maxw); margin: 0 auto; padding: 52px 22px; scroll-margin-top: calc(var(--navh) + 10px); }
+  .sec-head { text-align: center; margin-bottom: 32px; }
+  .sec-head .kicker { color: var(--pink); font-weight: 700; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; }
+  .sec-head h2 { font-size: clamp(24px, 3.6vw, 34px); font-weight: 800; margin-top: 8px; }
+  .sec-head p { color: var(--muted); margin-top: 8px; font-size: 15px; }
+
+  /* ===== 正文排版 ===== */
+  .prose { max-width: 780px; margin: 0 auto; font-size: 16px; line-height: 1.95; color: #D6D6E0; }
+  .prose h3 { font-size: 19px; font-weight: 800; margin: 30px 0 10px; color: var(--on-dark); }
+  .prose h3:first-child { margin-top: 0; }
+  .prose p { margin-bottom: 14px; }
+  .prose strong { color: var(--on-dark); }
+  .prose a { color: var(--cyan); border-bottom: 1px dashed rgba(124,208,224,.5); }
+  .prose ul { margin: 0 0 14px; padding-left: 22px; }
+  .prose li { margin-bottom: 8px; }
+
+  /* ===== 数据条 ===== */
+  .stats { max-width: 820px; margin: 34px auto 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+  .stat { background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 16px 18px; text-align: center; }
+  .stat b { display: block; font-size: 22px; font-weight: 900; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .stat span { font-size: 13px; color: var(--muted); }
+
+  /* ===== 目录导航 ===== */
+  .toc { max-width: 780px; margin: 0 auto 6px; background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 16px 20px; }
+  .toc strong { display: block; font-size: 13px; color: var(--muted); letter-spacing: 1px; margin-bottom: 8px; }
+  .toc ol { display: flex; flex-wrap: wrap; gap: 8px 18px; padding-left: 20px; font-size: 14.5px; }
+  .toc a { color: var(--muted); }
+  .toc a:hover { color: var(--pink); }
+
+  /* ===== Feature grid ===== */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: var(--radius);
+    padding: 24px 22px; transition: transform .2s, border-color .2s, box-shadow .2s;
+  }
+  .card:hover { transform: translateY(-4px); border-color: rgba(255,77,109,.45); box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+  .card .ico {
+    width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center;
+    background: var(--grad-soft); margin-bottom: 14px;
+  }
+  .card .ico svg { width: 24px; height: 24px; stroke: var(--pink); fill: none; stroke-width: 1.8; }
+  .card h3 { font-size: 17.5px; font-weight: 700; margin-bottom: 8px; }
+  .card p { color: var(--muted); font-size: 14.5px; }
+
+  /* ===== Steps ===== */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; counter-reset: s; }
+  .step { background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: var(--radius); padding: 22px; position: relative; }
+  .step::before { counter-increment: s; content: counter(s); position: absolute; top: 16px; right: 18px; font-size: 32px; font-weight: 900; color: rgba(255,255,255,.06); }
+  .step h4 { font-size: 16px; margin-bottom: 6px; padding-right: 40px; }
+  .step p { color: var(--muted); font-size: 14px; }
+
+  /* ===== 提示条 ===== */
+  .notice {
+    max-width: 780px; margin: 22px auto 0; padding: 14px 18px; border-radius: 12px; font-size: 14px;
+    background: rgba(255,176,32,.08); border: 1px solid rgba(255,176,32,.28); color: #E7D9BC;
+  }
+
+  /* ===== Changelog ===== */
+  .log { max-width: 820px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .log-col { background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: var(--radius); padding: 22px 24px; }
+  .log-col h3 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .log-col h3 .tag { font-size: 12px; padding: 2px 10px; border-radius: 999px; font-weight: 700; }
+  .tag-new { background: rgba(124,224,168,.14); color: #7CE0A8; }
+  .tag-fix { background: rgba(255,176,32,.14); color: var(--rating); }
+  .log-col ul { padding-left: 20px; font-size: 14.5px; color: var(--muted); }
+  .log-col li { margin-bottom: 7px; }
+
+  /* ===== FAQ ===== */
+  .faq { max-width: 780px; margin: 0 auto; }
+  .faq-item { background: var(--surface); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+  .faq-q { width: 100%; text-align: left; background: none; border: none; color: var(--on-dark); padding: 16px 22px; font-size: 16px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 12px; font-family: inherit; }
+  .faq-q .arrow { transition: transform .25s; color: var(--pink); font-size: 20px; line-height: 1; }
+  .faq-item.open .faq-q .arrow { transform: rotate(45deg); }
+  .faq-a { max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+  .faq-a-inner { padding: 0 22px 18px; color: var(--muted); font-size: 15px; line-height: 1.9; }
+  .faq-a a { color: var(--cyan); border-bottom: 1px dashed rgba(124,208,224,.5); }
+
+  /* ===== CTA band ===== */
+  .band {
+    max-width: var(--maxw); margin: 0 auto 56px; padding: 44px 28px; border-radius: 26px; text-align: center;
+    background: var(--grad-soft); border: 1px solid rgba(255,255,255,.10); position: relative; overflow: hidden;
+  }
+  .band h2 { font-size: clamp(22px, 4vw, 32px); font-weight: 800; }
+  .band p { color: var(--muted); margin: 10px 0 24px; }
+
+  /* ===== Download ===== */
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; max-width: 760px; margin: 0 auto; }
+  .dl-card {
+    position: relative; background: var(--surface); border: 1px solid rgba(255,255,255,.08);
+    border-radius: var(--radius); padding: 30px 26px 28px; text-align: center;
+    transition: transform .2s, border-color .2s, box-shadow .2s;
+  }
+  .dl-card:hover { transform: translateY(-4px); border-color: rgba(255,77,109,.45); box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+  .dl-card.dl-recommend { border-color: rgba(255,77,109,.5); background: linear-gradient(180deg, rgba(255,77,109,.08), var(--surface) 42%); }
+  .dl-badge {
+    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+    background: var(--grad); color: #fff; font-size: 12px; font-weight: 700;
+    padding: 4px 14px; border-radius: 999px; box-shadow: 0 6px 16px rgba(255,77,109,.4);
+  }
+  .dl-ico { font-size: 34px; margin-bottom: 8px; }
+  .dl-card h3 { font-size: 19px; font-weight: 800; margin-bottom: 8px; }
+  .dl-desc { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .dl-pwd { margin-top: 12px; font-size: 14px; color: var(--muted); }
+  .dl-pwd b { color: var(--rating); font-size: 16px; letter-spacing: 2px; }
+  .dl-qr { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .dl-qr img { width: 140px; height: 140px; border-radius: 14px; background: #fff; padding: 8px; }
+  .dl-qr span { font-size: 12.5px; color: var(--muted); }
+
+  .dl-subhead { text-align: center; margin: 48px auto 26px; max-width: 760px; }
+  .dl-subhead h3 { font-size: 21px; font-weight: 800; }
+  .dl-subhead p { color: var(--muted); font-size: 14.5px; margin-top: 8px; }
+  .dl-grid-arch { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; max-width: 980px; margin: 0 auto; }
+  .dl-meta { margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+  .dl-meta b { color: var(--on-dark); font-weight: 600; }
+
+  /* ===== Footer ===== */
+  footer { border-top: 1px solid rgba(255,255,255,.06); padding: 36px 22px 52px; }
+  .foot-inner { max-width: var(--maxw); margin: 0 auto; display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: flex-start; }
+  .foot-inner .brand { font-size: 17px; }
+  .foot-links { display: flex; gap: 22px; flex-wrap: wrap; font-size: 14px; }
+  .foot-links a { color: var(--muted); }
+  .foot-links a:hover { color: var(--on-dark); }
+  .disclaimer { max-width: var(--maxw); margin: 24px auto 0; font-size: 12.5px; color: var(--muted); opacity: .85; line-height: 1.8; border-top: 1px dashed rgba(255,255,255,.08); padding-top: 16px; }
+  .copyright { max-width: var(--maxw); margin: 12px auto 0; font-size: 12.5px; color: var(--muted); opacity: .7; }
+
+  /* ===== Screenshots ===== */
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+  .shots-pad { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .shots-pad .shot img { aspect-ratio: 16 / 10; object-fit: cover; }
+  .shot {
+    position: relative; border-radius: 14px; overflow: hidden; cursor: pointer; margin: 0;
+    background: var(--surface); border: 1px solid rgba(255,255,255,.08);
+    transition: transform .2s, border-color .2s, box-shadow .2s;
+  }
+  .shot:hover { transform: translateY(-4px); border-color: rgba(255,77,109,.45); box-shadow: 0 16px 40px rgba(0,0,0,.4); }
+  .shot img { width: 100%; display: block; aspect-ratio: 9 / 19; object-fit: cover; }
+  .shot .cap {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 9px 11px;
+    font-size: 12.5px; font-weight: 600; color: #fff;
+    background: linear-gradient(to top, rgba(0,0,0,.78), transparent);
+  }
+  /* lightbox */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 100; display: none;
+    background: rgba(8,8,12,.92); backdrop-filter: blur(6px);
+    align-items: center; justify-content: center; padding: 24px;
+  }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .lightbox .lb-close {
+    position: absolute; top: 18px; right: 22px; width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff;
+    font-size: 22px; line-height: 1; cursor: pointer; display: grid; place-items: center;
+  }
+  .lightbox .lb-close:hover { background: var(--pink); }
+
+  /* ===== Danmaku background ===== */
+  #bg { position: fixed; inset: 0; z-index: -1; background: var(--bg); }
+  .danmaku-layer { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  body > section, body > footer, body > .band { position: relative; z-index: 1; }
+  .danmaku {
+    position: absolute; left: 100%; top: 0; white-space: nowrap;
+    font-size: 18px; font-weight: 700; opacity: .26; will-change: transform;
+    text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  }
+  @keyframes danmaku-fly { to { transform: translateX(calc(-100vw - 100%)); } }
+
+  /* reveal */
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  .skip-link { position: absolute; left: -9999px; }
+  .skip-link:focus { left: 12px; top: 12px; z-index: 200; background: var(--pink); color: #fff; padding: 8px 14px; border-radius: 8px; }
+
+  @media (max-width: 900px) {
+    .nav-links { display: none; }
+    .nav-scroll { display: block; }
+  }
+  @media (max-width: 640px) {
+    section { padding: 40px 18px; }
+    .hero { padding: 38px 18px 34px; }
+    .prose { font-size: 15.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .danmaku-layer { display: none; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+  }
+</style>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://tuanyingshi.tuxiwan.cn/#website",
+      "url": "https://tuanyingshi.tuxiwan.cn/",
+      "name": "团影视",
+      "alternateName": "Tuanyingshi",
+      "inLanguage": "zh-CN",
+      "description": "团影视是一款面向安卓设备的动漫番剧聚合播放与离线缓存客户端，官方下载与使用说明站点。"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://tuanyingshi.tuxiwan.cn/#app",
+      "name": "团影视",
+      "alternateName": "Tuanyingshi",
+      "operatingSystem": "Android 7.0+",
+      "applicationCategory": "MultimediaApplication",
+      "applicationSubCategory": "动漫番剧播放与离线缓存",
+      "softwareVersion": "0.5.1",
+      "fileSize": "24.8 MB",
+      "inLanguage": "zh-CN",
+      "url": "https://tuanyingshi.tuxiwan.cn/",
+      "image": "https://tuanyingshi.tuxiwan.cn/assets/logo.png",
+      "screenshot": [
+        "https://tuanyingshi.tuxiwan.cn/assets/home.png",
+        "https://tuanyingshi.tuxiwan.cn/assets/play.png",
+        "https://tuanyingshi.tuxiwan.cn/assets/paiqi.png",
+        "https://tuanyingshi.tuxiwan.cn/assets/Pad_home.png"
+      ],
+      "featureList": [
+        "HLS / m3u8 在线播放与清晰度、播放源切换",
+        "选集离线缓存下载与按番剧合集管理",
+        "电影 / 动漫分区与品牌、类型、年份、地区多维筛选",
+        "周更番剧排期表与热门排行榜",
+        "弹幕功能与弹弹Play开放弹幕网络接入",
+        "跨设备同步与设备直链同步",
+        "自定义开屏图片与开屏时长调节",
+        "手机与平板自适应布局，大屏双栏"
+      ],
+      "releaseNotes": "v0.5.1：新增播放器弹幕、弹幕资源选择与详细配置、接入弹弹Play开放弹幕网络、跨设备同步与设备直链同步、XPlay 资源配置导入、无法播放时自动换线或换源；修复 TV 番剧标签无数据、播放器与详情页载入过慢、更新弹窗下载异常等问题。",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY",
+        "availability": "https://schema.org/InStock"
+      },
+      "downloadUrl": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-universal-release.apk",
+      "codeRepository": "https://github.com/tuxiw/tuan-ying-shi/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "首页", "item": "https://tuanyingshi.tuxiwan.cn/" },
+        { "@type": "ListItem", "position": 2, "name": "应用亮点", "item": "https://tuanyingshi.tuxiwan.cn/#features" },
+        { "@type": "ListItem", "position": 3, "name": "下载", "item": "https://tuanyingshi.tuxiwan.cn/#download" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "团影视的资源来源是什么？",
+          "acceptedAnswer": { "@type": "Answer", "text": "团影视本身不存储任何视频数据，全部内容均来自第三方公开网络数据源，应用仅作为播放与下载的聚合客户端。我们不保证每个在线源的连通性，遇到无法播放时可切换播放源或线路。" }
+        },
+        {
+          "@type": "Question",
+          "name": "部分资源无法播放怎么办？",
+          "acceptedAnswer": { "@type": "Answer", "text": "在 App 内「设置 → 数据源」中切换资源，推荐顺序为：次元城（API）> 嘶哩嘶哩（CSS）> Girgiri（CSS）。v0.5.1 起新增「无法播放时自动换线或换源」，开启后会自动尝试可用线路。" }
+        },
+        {
+          "@type": "Question",
+          "name": "安装时提示「禁止安装未知来源应用」怎么办？",
+          "acceptedAnswer": { "@type": "Answer", "text": "这是安卓系统的保护机制。在安装弹窗中点击「设置」，允许当前使用的浏览器或文件管理器「安装未知应用」权限，再返回继续安装即可。" }
+        },
+        {
+          "@type": "Question",
+          "name": "应该下载哪个架构的安装包？",
+          "acceptedAnswer": { "@type": "Answer", "text": "普通手机与平板直接选择 universal 通用包（推荐首选）或 arm64-v8a 包；较旧的安卓设备选择 armeabi-v7a；Chromebook 与模拟器选择 x86_64。蓝奏云渠道输入提取密码 8888 即可获取。" }
+        },
+        {
+          "@type": "Question",
+          "name": "遇到问题如何反馈？",
+          "acceptedAnswer": { "@type": "Answer", "text": "可前往 Gitee Issues 提交反馈或建议，也可以在 GitHub / Gitee 项目主页关注更新。开源地址：github.com/tuxiw/tuan-ying-shi、gitee.com/tuxiw/tuan-ying-shi。" }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<div id="bg"></div>
+<div class="danmaku-layer" id="danmakuLayer" aria-hidden="true"></div>
+
+<!-- ===== NAV ===== -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="团影视首页">
+      <img src="assets/logo.png" alt="团影视 App 图标" width="34" height="34" />
+      <span>团<span class="dot">影视</span></span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#about">应用简介</a>
+      <a href="#features">应用亮点</a>
+      <a href="#shots">界面预览</a>
+      <a href="#guide">使用教程</a>
+      <a href="#changelog">更新日志</a>
+      <a href="#faq">常见问题</a>
+      <a href="#download">下载</a>
+    </nav>
+    <a class="btn btn-primary" href="https://fansengshenyue.lanzouv.com/b0umgnw9i" target="_blank" rel="noopener noreferrer">下载 APP</a>
+  </div>
+  <nav class="nav-scroll" aria-label="快捷导航">
+    <div class="nav-scroll-inner">
+      <a href="#about">应用简介</a>
+      <a href="#features">应用亮点</a>
+      <a href="#shots">界面预览</a>
+      <a href="#pad">平板适配</a>
+      <a href="#guide">使用教程</a>
+      <a href="#changelog">更新日志</a>
+      <a href="#faq">常见问题</a>
+      <a href="#download">下载</a>
+    </div>
+  </nav>
+</header>
+
+<main id="main">
+
+<!-- ===== HERO ===== -->
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <div class="hero-inner">
+    <span class="badge"><span class="pulse"></span> 安卓端 · 动漫番剧聚合播放</span>
+    <h1 id="hero-title">一站式<span class="grad">动漫番剧</span><br/>观看与离线缓存</h1>
+    <p class="sub">团影视聚合次元城等公开数据源，支持 HLS 在线播放、选集离线缓存、周更排期与热门排行榜，内置弹幕与跨设备同步。一个 App，追番无忧。</p>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="https://fansengshenyue.lanzouv.com/b0umgnw9i" target="_blank" rel="noopener noreferrer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
+        蓝奏云下载（推荐）
+      </a>
+      <a class="btn btn-ghost" href="#download">查看全部下载渠道</a>
+    </div>
+    <p class="arch-note">当前版本 v0.5.1 · 安装包约 24.8 MB · 支持 Android 7.0 及以上</p>
+  </div>
+</section>
+
+<!-- ===== ABOUT ===== -->
+<section id="about" aria-labelledby="about-title">
+  <div class="sec-head reveal">
+    <div class="kicker">About</div>
+    <h2 id="about-title">关于团影视</h2>
+    <p>安卓端动漫番剧聚合播放客户端，找番、看番、缓存番一站完成</p>
+  </div>
+
+  <div class="toc reveal" aria-label="本页目录">
+    <strong>本页目录</strong>
+    <ol>
+      <li><a href="#about">应用简介</a></li>
+      <li><a href="#features">应用亮点</a></li>
+      <li><a href="#shots">界面预览</a></li>
+      <li><a href="#pad">平板适配</a></li>
+      <li><a href="#guide">使用教程</a></li>
+      <li><a href="#changelog">更新日志</a></li>
+      <li><a href="#faq">常见问题</a></li>
+      <li><a href="#download">官方下载</a></li>
+    </ol>
+  </div>
+
+  <article class="prose reveal">
+    <h3>团影视是什么</h3>
+    <p>团影视（Tuanyingshi）是一款面向安卓设备的动漫番剧聚合播放客户端。它把「找番、看番、缓存番」三件事压缩到一个 App 里完成：首页推荐帮你发现内容，分类与筛选帮你精准定位，播放器负责流畅播放，下载模块负责把喜欢的内容带回本地。无论是通勤路上、飞行途中还是网络不佳的环境，都能随时接着看。</p>
+
+    <h3>数据来源与多源切换</h3>
+    <p>团影视本身<strong>不存储、不提供任何视频资源</strong>，所有内容均来自第三方公开网络数据源，应用仅作为聚合播放与下载的客户端。常用数据源包括<strong>次元城（API）</strong>、<strong>嘶哩嘶哩（CSS）</strong>与 <strong>Girgiri（CSS）</strong>，可在「设置 → 数据源」中随时切换。从 v0.5.1 起新增「无法播放时自动换线或换源」，当某条线路不可用时会自动尝试其他可用线路，并支持对 CSS、XPlay 类资源做配置导入与连通性验证检查，尽可能减少「点开就转圈」的情况。</p>
+
+    <h3>播放与弹幕体验</h3>
+    <p>播放器原生支持 <strong>HLS / m3u8</strong> 直播与点播，可切换清晰度与播放源，并支持进入播放页自动全屏。v0.5.1 新增完整的<strong>弹幕功能</strong>：接入弹弹 Play 开放弹幕网络，支持弹幕默认开启、弹幕资源选择以及字体、透明度、显示区域等详细配置，让追番保留弹幕互动的乐趣。</p>
+
+    <h3>内容组织：排期、榜单与筛选</h3>
+    <p>内容侧提供<strong>电影 / 动漫分区</strong>，叠加品牌、类型、年份、地区等多维筛选条件，快速定位想看的内容；同时提供<strong>周更番剧排期表</strong>与<strong>热门排行榜</strong>，当季新番与大家正在追的番剧一目了然。遇到喜欢的番剧，可以选集<strong>离线缓存下载</strong>，按番剧自动合集管理，支持断点续存与缓存清理。</p>
+
+    <h3>设备适配与个性化</h3>
+    <p>界面采用一套代码自适应手机与平板，大屏下自动切换双栏布局，横屏与分屏场景同样适用。v0.5.1 新增<strong>跨设备同步</strong>与<strong>设备直链同步</strong>，换设备也能继续观看进度。启动页支持使用系统内置图或自定义图片作为开屏，开屏时长可在 3–10 秒之间自由调节，也可以直接隐藏首页轮播图。</p>
+  </article>
+
+  <div class="stats reveal">
+    <div class="stat"><b>v0.5.1</b><span>当前版本</span></div>
+    <div class="stat"><b>24.8 MB</b><span>通用包体积</span></div>
+    <div class="stat"><b>Android 7.0+</b><span>系统要求</span></div>
+    <div class="stat"><b>4 种</b><span>架构安装包</span></div>
+  </div>
+</section>
+
+<!-- ===== FEATURES ===== -->
+<section id="features" aria-labelledby="features-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Features</div>
+    <h2 id="features-title">应用亮点</h2>
+    <p>为追番体验精心打磨的每一项能力</p>
+  </div>
+  <div class="grid">
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg></div>
+      <h3>在线流畅播放</h3>
+      <p>原生播放器支持 HLS / m3u8 直播与点播，可切换清晰度与播放源，支持进入播放页自动全屏；线路异常时可自动换线或换源，减少播放中断。</p>
+    </div>
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></div>
+      <h3>离线缓存下载</h3>
+      <p>按选集离线保存，下载内容按番剧自动归入合集，支持断点续存与一键清理缓存，没有网络也能继续追番。</p>
+    </div>
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <h3>分类与多维筛选</h3>
+      <p>电影 / 动漫分区浏览，叠加品牌、类型、年份、地区等多维筛选条件，从海量片库中快速定位想看的内容。</p>
+    </div>
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 3-4 3 3 4-6"/></svg></div>
+      <h3>排期表 &amp; 排行榜</h3>
+      <p>周更番剧排期按星期排列，更新时间一目了然；热门排行榜实时反映大家正在追的内容，新番上线不错过。</p>
+    </div>
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <h3>弹幕与跨设备同步</h3>
+      <p>接入弹弹 Play 开放弹幕网络，支持弹幕开关、弹幕资源选择与详细配置；同时支持跨设备同步与设备直链同步，换设备继续看。</p>
+    </div>
+    <div class="card reveal">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20"/><path d="M2 12h20"/></svg></div>
+      <h3>个性化与外部播放</h3>
+      <p>可自定义开屏图片与 3–10 秒开屏时长，支持隐藏首页轮播图；同时支持系统「打开方式」接入，本地与分享的 mp4 / m3u8 视频可直接调用团影视播放。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCREENSHOTS ===== -->
+<section id="shots" aria-labelledby="shots-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Preview</div>
+    <h2 id="shots-title">界面预览</h2>
+    <p>真实界面截图，看看团影视长什么样（点击可放大）</p>
+  </div>
+  <div class="shots">
+    <figure class="shot reveal" data-full="assets/home.png"><img src="assets/home.png" alt="团影视 App 首页推荐界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">首页推荐</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/home_jucan.png"><img src="assets/home_jucan.png" alt="团影视首页剧集分区界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">首页 · 剧集</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/home_tv.png"><img src="assets/home_tv.png" alt="团影视首页影视分区界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">首页 · 影视</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/fanjuxq.png"><img src="assets/fanjuxq.png" alt="团影视番剧详情页与选集列表截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">番剧详情与选集</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/paiqi.png"><img src="assets/paiqi.png" alt="团影视周更番剧排期表界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">周更排期表</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/paihan.png"><img src="assets/paihan.png" alt="团影视热门番剧排行榜界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">热门排行榜</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/search.png"><img src="assets/search.png" alt="团影视搜索与筛选结果界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">搜索与筛选</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/play.png"><img src="assets/play.png" alt="团影视播放器界面与清晰度切换截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">播放页</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/play1.png"><img src="assets/play1.png" alt="团影视播放器弹幕与选集界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">播放页 · 弹幕</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/play2.png"><img src="assets/play2.png" alt="团影视播放器全屏播放界面截图" width="360" height="760" loading="lazy" decoding="async" /><figcaption class="cap">播放页 · 全屏</figcaption></figure>
+  </div>
+</section>
+
+<!-- ===== PAD / TABLET ===== -->
+<section id="pad" aria-labelledby="pad-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Tablet</div>
+    <h2 id="pad-title">大屏 / 平板适配</h2>
+    <p>一套界面自适应手机与平板，大屏下自动切换双栏布局，追番更舒服（点击可放大）</p>
+  </div>
+  <div class="shots-pad">
+    <figure class="shot reveal" data-full="assets/Pad_home.png"><img src="assets/Pad_home.png" alt="团影视平板端首页双栏布局截图" width="640" height="400" loading="lazy" decoding="async" /><figcaption class="cap">平板 · 首页</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/Pad_home_jucan.png"><img src="assets/Pad_home_jucan.png" alt="团影视平板端剧集分区双栏布局截图" width="640" height="400" loading="lazy" decoding="async" /><figcaption class="cap">平板 · 剧集</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/Pad_home_tv.png"><img src="assets/Pad_home_tv.png" alt="团影视平板端影视分区双栏布局截图" width="640" height="400" loading="lazy" decoding="async" /><figcaption class="cap">平板 · 影视</figcaption></figure>
+    <figure class="shot reveal" data-full="assets/Pad_paiqi.png"><img src="assets/Pad_paiqi.png" alt="团影视平板端周更排期表界面截图" width="640" height="400" loading="lazy" decoding="async" /><figcaption class="cap">平板 · 排期表</figcaption></figure>
+  </div>
+  <div class="prose reveal" style="margin-top:28px;">
+    <p>平板与大屏设备下，首页、分类、排期等页面会自动从单列切换为双栏：左侧为内容列表，右侧为详情或筛选结果，充分利用横向空间，减少来回跳转。同一套安装包即可适配手机与平板，无需单独下载平板版。</p>
+  </div>
+</section>
+
+<!-- ===== GUIDE ===== -->
+<section id="guide" aria-labelledby="guide-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Get Started</div>
+    <h2 id="guide-title">三步开始追番</h2>
+    <p>从下载安装到离线缓存，几分钟即可上手</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal"><h4>下载安装</h4><p>前往页面「官方下载」区，选择蓝奏云（推荐）或 Gitee Releases 获取安装包。首次安装需在系统弹窗中允许「安装未知应用」权限。</p></div>
+    <div class="step reveal"><h4>浏览发现</h4><p>通过首页推荐、电影 / 动漫分类、周更排期表与热门排行榜找到想看的番剧，也可直接用搜索与多维筛选精确定位。</p></div>
+    <div class="step reveal"><h4>观看或缓存</h4><p>在线播放时可切换清晰度、播放源与弹幕设置；想离线观看则选择对应选集下载，内容会按番剧自动归入合集。</p></div>
+  </div>
+
+  <article class="prose reveal" style="margin-top:36px;">
+    <h3>详细使用说明</h3>
+    <p><strong>安装前准备：</strong>建议在「设置 → 存储」中确认剩余空间充足，并在系统设置里为所用浏览器或文件管理器开启「安装未知应用」权限。若下载的是分架构包，普通手机与平板选 universal 或 arm64-v8a，老旧设备选 armeabi-v7a，Chromebook 与模拟器选 x86_64。</p>
+    <p><strong>切换数据源：</strong>打开 App 进入「设置 → 数据源」，推荐顺序为次元城（API）&gt; 嘶哩嘶哩（CSS）&gt; Girgiri（CSS）。v0.5.1 起可开启「无法播放时自动换线或换源」，让播放器自动挑选可用线路；也可导入 XPlay 资源配置，并使用内置的资源验证检查确认配置可用。</p>
+    <p><strong>离线缓存：</strong>在番剧详情页进入选集列表，点击需要缓存的集数即可开始下载。下载内容按番剧自动合集管理，支持断点续存；空间不足时可在下载管理页一键清理缓存。</p>
+    <p><strong>弹幕与同步：</strong>在播放页开启弹幕后，可在设置中选择弹幕资源（支持弹弹 Play 开放弹幕网络）并调整字体、透明度与显示区域。跨设备同步与设备直链同步可将观看进度同步到其他设备，换设备继续观看。</p>
+    <p><strong>个性化设置：</strong>「设置 → 开屏」可自定义启动图与 3–10 秒的开屏时长；不希望看到首页轮播图时，可在设置中隐藏；播放器也支持进入播放页自动全屏。</p>
+    <ul>
+      <li>所有视频内容均来自第三方公开网络资源，应用不存储任何视频数据。</li>
+      <li>在线源的连通性会随网络环境变化，无法播放时优先尝试切换播放源或线路。</li>
+      <li>离线缓存仅用于个人学习交流，请在下载与观看时遵守所在国家或地区的法律法规，支持正版。</li>
+    </ul>
+  </article>
+
+  <p class="notice">提示：若安装后提示「解析包错误」，通常是安装包下载不完整，请重新下载或改用另一种下载渠道获取安装包。</p>
+</section>
+
+<!-- ===== CHANGELOG ===== -->
+<section id="changelog" aria-labelledby="changelog-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Changelog</div>
+    <h2 id="changelog-title">v0.5.1 更新日志</h2>
+    <p>本次更新大幅优化播放与下载体验，新增弹幕与跨设备同步功能（发布于 2026-09-04）</p>
+  </div>
+  <div class="log reveal">
+    <div class="log-col">
+      <h3><span class="tag tag-new">新增</span> 功能</h3>
+      <ul>
+        <li>播放器弹幕功能，支持弹幕显示与互动</li>
+        <li>接入弹弹 Play 开放弹幕网络，弹幕资源更丰富</li>
+        <li>弹幕详细配置：字体、透明度、显示区域等</li>
+        <li>弹幕资源选择与「弹幕默认开启」选项</li>
+        <li>跨设备同步功能与设备直链同步</li>
+        <li>无法播放时自动换线或换源</li>
+        <li>XPlay 资源配置导入</li>
+        <li>CSS 资源、XPlay 资源验证检查</li>
+        <li>隐藏首页轮播图开关</li>
+        <li>进入播放页是否自动全屏播放视频</li>
+      </ul>
+    </div>
+    <div class="log-col">
+      <h3><span class="tag tag-fix">修复</span> 问题</h3>
+      <ul>
+        <li>修复部分资源进入 TV 番剧标签时无数据的问题</li>
+        <li>修复播放器和详情页面载入过慢的问题</li>
+        <li>修复更新弹窗「立即下载」按钮无法正常下载的问题</li>
+        <li>修复使用外部资源时下载番剧功能不生效的问题</li>
+        <li>修复部分资源下载出现异常的问题</li>
+        <li>修复部分 UI 问题并对部分 UI 进行调整</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FAQ ===== -->
+<section id="faq" aria-labelledby="faq-title">
+  <div class="sec-head reveal">
+    <div class="kicker">FAQ</div>
+    <h2 id="faq-title">常见问题</h2>
+    <p>安装、播放与下载过程中的高频疑问</p>
+  </div>
+  <div class="faq">
+    <div class="faq-item open">
+      <h3><button class="faq-q" type="button" aria-expanded="true">资源来源是什么？<span class="arrow" aria-hidden="true">+</span></button></h3>
+      <div class="faq-a"><div class="faq-a-inner">团影视本身不存储任何视频数据，全部内容均来自第三方公开网络数据源，应用仅作为播放与下载的聚合客户端。我们不保证每个在线源的连通性，遇到无法播放时可切换播放源或线路。</div></div>
+    </div>
+    <div class="faq-item open">
+      <h3><button class="faq-q" type="button" aria-expanded="true">部分资源无法播放怎么办？<span class="arrow" aria-hidden="true">+</span></button></h3>
+      <div class="faq-a"><div class="faq-a-inner">请在 App 内「设置 → 数据源」中切换资源，推荐顺序为：<b>次元城（API）</b> &gt; <b>嘶哩嘶哩（CSS）</b> &gt; <b>Girgiri（CSS）</b>。v0.5.1 起新增「无法播放时自动换线或换源」，开启后播放器会自动尝试可用线路，无需手动逐个尝试。</div></div>
+    </div>
+    <div class="faq-item open">
+      <h3><button class="faq-q" type="button" aria-expanded="true">安装时提示「禁止安装未知来源应用」怎么办？<span class="arrow" aria-hidden="true">+</span></button></h3>
+      <div class="faq-a"><div class="faq-a-inner">这是安卓系统的保护机制。请在安装弹窗中点击「设置」，允许当前使用的浏览器 / 文件管理器「安装未知应用」权限，再返回继续安装即可。</div></div>
+    </div>
+    <div class="faq-item">
+      <h3><button class="faq-q" type="button" aria-expanded="false">应该下载哪个架构的安装包？<span class="arrow" aria-hidden="true">+</span></button></h3>
+      <div class="faq-a"><div class="faq-a-inner">普通手机与平板直接选择 <b>universal 通用包</b>（推荐首选）或 <b>arm64-v8a</b> 包；较旧的安卓设备选择 <b>armeabi-v7a</b>；Chromebook 与模拟器选择 <b>x86_64</b>。蓝奏云渠道输入提取密码 <b>8888</b> 即可获取。</div></div>
+    </div>
+    <div class="faq-item">
+      <h3><button class="faq-q" type="button" aria-expanded="false">遇到问题如何反馈？项目是否开源？<span class="arrow" aria-hidden="true">+</span></button></h3>
+      <div class="faq-a"><div class="faq-a-inner">欢迎前往 <a href="https://gitee.com/tuxiw/tuan-ying-shi/issues" target="_blank" rel="noopener noreferrer">Gitee Issues</a> 提交反馈或建议；项目源码已在 <a href="https://github.com/tuxiw/tuan-ying-shi/" target="_blank" rel="noopener noreferrer">GitHub</a> 与 <a href="https://gitee.com/tuxiw/tuan-ying-shi" target="_blank" rel="noopener noreferrer">Gitee</a> 公开，可自行查看、编译与交流。</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== DOWNLOAD ===== -->
+<section id="download" aria-labelledby="download-title">
+  <div class="sec-head reveal">
+    <div class="kicker">Download</div>
+    <h2 id="download-title">下载团影视</h2>
+    <p>提供以下两种官方下载渠道，任选其一即可</p>
+  </div>
+  <div class="dl-grid">
+    <div class="dl-card dl-recommend reveal">
+      <div class="dl-badge">推荐</div>
+      <div class="dl-ico" aria-hidden="true">☁️</div>
+      <h3>蓝奏云</h3>
+      <p class="dl-desc">稳定高速，点击下方链接或扫码进入下载页。</p>
+      <a class="btn btn-primary" href="https://fansengshenyue.lanzouv.com/b0umgnw9i" target="_blank" rel="noopener noreferrer">前往蓝奏云下载</a>
+      <p class="dl-pwd">提取密码：<b>8888</b></p>
+      <div class="dl-qr">
+        <img src="assets/xz1.png" alt="团影视蓝奏云下载页二维码" width="140" height="140" loading="lazy" decoding="async" />
+        <span>扫码下载（推荐）</span>
+      </div>
+    </div>
+    <div class="dl-card reveal">
+      <div class="dl-ico" aria-hidden="true">📦</div>
+      <h3>Gitee Releases</h3>
+      <p class="dl-desc">项目发布页，可获取各版本安装包与更新说明。</p>
+      <a class="btn btn-ghost" href="https://gitee.com/tuxiw/tuan-ying-shi/releases" target="_blank" rel="noopener noreferrer">前往 Gitee 下载</a>
+    </div>
+  </div>
+
+  <div class="dl-subhead reveal">
+    <h3>官方直链安装包 · v0.5.1</h3>
+    <p>下方为官方安装包直链（Gitee Releases），按设备架构选择下载（universal 兼容全部设备，推荐首选）。</p>
+  </div>
+  <div class="dl-grid-arch">
+    <div class="dl-card dl-recommend reveal">
+      <div class="dl-badge">推荐</div>
+      <div class="dl-ico" aria-hidden="true">📱</div>
+      <h3>Universal</h3>
+      <p class="dl-desc">universal（推荐）· 适用全部设备</p>
+      <a class="btn btn-primary" href="https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-universal-release.apk" target="_blank" rel="noopener noreferrer">下载 APK</a>
+      <p class="dl-meta">大小：<b>24.8 MB</b><br/>校验：<b>1945f02839d0267e…</b></p>
+    </div>
+    <div class="dl-card reveal">
+      <div class="dl-ico" aria-hidden="true">🤖</div>
+      <h3>arm64-v8a</h3>
+      <p class="dl-desc">几乎所有手机和平板</p>
+      <a class="btn btn-ghost" href="https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-arm64-v8a-release.apk" target="_blank" rel="noopener noreferrer">下载 APK</a>
+      <p class="dl-meta">大小：<b>24.7 MB</b><br/>校验：<b>f7923c78e01d93b4…</b></p>
+    </div>
+    <div class="dl-card reveal">
+      <div class="dl-ico" aria-hidden="true">📟</div>
+      <h3>armeabi-v7a</h3>
+      <p class="dl-desc">旧手机等 32 位设备</p>
+      <a class="btn btn-ghost" href="https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-armeabi-v7a-release.apk" target="_blank" rel="noopener noreferrer">下载 APK</a>
+      <p class="dl-meta">大小：<b>24.7 MB</b><br/>校验：<b>5ae44d1f4238bcec…</b></p>
+    </div>
+    <div class="dl-card reveal">
+      <div class="dl-ico" aria-hidden="true">💻</div>
+      <h3>x86_64</h3>
+      <p class="dl-desc">Chromebook 及模拟器</p>
+      <a class="btn btn-ghost" href="https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-x86_64-release.apk" target="_blank" rel="noopener noreferrer">下载 APK</a>
+      <p class="dl-meta">大小：<b>24.7 MB</b><br/>校验：<b>ecf5a2cd00e2e6da…</b></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CTA BAND ===== -->
+<div class="band reveal">
+  <h2>现在就开始追番吧</h2>
+  <p>下载团影视，把喜欢的动漫番剧装进口袋。</p>
+  <a class="btn btn-primary" href="https://fansengshenyue.lanzouv.com/b0umgnw9i" target="_blank" rel="noopener noreferrer">下载安装包</a>
+</div>
+
+</main>
+
+<!-- ===== LIGHTBOX ===== -->
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="截图预览">
+  <button class="lb-close" id="lbClose" aria-label="关闭预览">&times;</button>
+  <img id="lbImg" src="" alt="团影视界面截图大图预览" />
+</div>
+
+<!-- ===== FOOTER ===== -->
+<footer>
+  <div class="foot-inner">
+    <a class="brand" href="#top" aria-label="返回顶部">
+      <img src="assets/logo.png" alt="团影视 App 图标" width="30" height="30" style="width:30px;height:30px;border-radius:8px;" />
+      <span>团<span class="dot">影视</span></span>
+    </a>
+    <nav class="foot-links" aria-label="页脚导航">
+      <a href="#about">应用简介</a>
+      <a href="#features">应用亮点</a>
+      <a href="#guide">使用教程</a>
+      <a href="#changelog">更新日志</a>
+      <a href="#download">官方下载</a>
+      <a href="https://gitee.com/tuxiw/tuan-ying-shi/releases" target="_blank" rel="noopener noreferrer">Gitee 下载仓库</a>
+      <a href="https://github.com/tuxiw/tuan-ying-shi/" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
+      <a href="https://gitee.com/tuxiw/tuan-ying-shi/issues" target="_blank" rel="noopener noreferrer">意见反馈</a>
+      <a href="./wechat-article.html">APP 发布介绍</a>
+    </nav>
+  </div>
+  <p class="disclaimer">
+    免责声明：团影视是一款仅供个人学习与交流使用的安卓影音客户端，所有视频内容均来自第三方公开网络资源，本应用不存储、不提供任何视频资源，亦不对资源的合法性、准确性与可用性负责。请在下载、缓存与观看过程中遵守所在国家或地区的法律法规，支持正版。使用本应用即表示您已阅读并同意上述说明。
+  </p>
+  <p class="copyright">© 2026 团影视（Tuanyingshi）· 官方下载与使用说明</p>
+</footer>
+
+<script>
+  // FAQ accordion：默认展开项直接可见，其余折叠，减少首屏遮挡与展开次数
+  (function () {
+    function sync(item, open) {
+      var a = item.querySelector('.faq-a');
+      var btn = item.querySelector('.faq-q');
+      item.classList.toggle('open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      a.style.maxHeight = open ? a.scrollHeight + 'px' : '0px';
+    }
+    var items = document.querySelectorAll('.faq-item');
+    items.forEach(function (item) { sync(item, item.classList.contains('open')); });
+    items.forEach(function (item) {
+      item.querySelector('.faq-q').addEventListener('click', function () {
+        sync(item, !item.classList.contains('open'));
+      });
+    });
+    window.addEventListener('resize', function () {
+      items.forEach(function (item) {
+        if (item.classList.contains('open')) {
+          item.querySelector('.faq-a').style.maxHeight = item.querySelector('.faq-a').scrollHeight + 'px';
+        }
+      });
+    });
+  })();
+
+  // scroll reveal
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+
+  // 导航高亮（桌面 + 移动端锚点条）
+  var navAnchors = document.querySelectorAll('.nav-links a[href^="#"], .nav-scroll-inner a[href^="#"]');
+  if (navAnchors.length) {
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        var id = e.target.id;
+        navAnchors.forEach(function (a) {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+        });
+      });
+    }, { rootMargin: '-30% 0px -60% 0px' });
+    document.querySelectorAll('main section[id]').forEach(function (s) { spy.observe(s); });
+  }
+
+  // screenshot lightbox
+  var lb = document.getElementById('lightbox');
+  var lbImg = document.getElementById('lbImg');
+  var lastFocus = null;
+  function openLb(src) { lastFocus = document.activeElement; lbImg.src = src; lb.classList.add('open'); document.getElementById('lbClose').focus(); }
+  function closeLb() { lb.classList.remove('open'); lbImg.src = ''; if (lastFocus) lastFocus.focus(); }
+  document.querySelectorAll('.shot').forEach(function (s) {
+    s.addEventListener('click', function () { openLb(s.getAttribute('data-full')); });
+  });
+  document.getElementById('lbClose').addEventListener('click', closeLb);
+  lb.addEventListener('click', function (e) { if (e.target === lb) closeLb(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLb(); });
+
+  // danmaku background（低动效偏好或窄屏时自动关闭）
+  (function () {
+    var layer = document.getElementById('danmakuLayer');
+    if (!layer) return;
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || window.innerWidth < 640) return;
+    var texts = ['前方高能','哈哈哈哈哈','名场面','爷青回','awsl','催更了','这画质绝了','泪目','太顶了',
+      '名台词','考据党狂喜','弹幕护体','下饭神番','梦开始的地方','经典永流传','二刷打卡','空降成功',
+      '保护我方','高能预警','一键三连','名场景打卡','考古成功','画面太美','DNA动了','名作之壁','追番快乐'];
+    var colors = ['#FF4D6D','#9D7CE0','#7CD0E0','#FFB020','#7CE0A8','#EDEDF2'];
+    function spawn() {
+      var d = document.createElement('div');
+      d.className = 'danmaku';
+      d.textContent = texts[Math.floor(Math.random() * texts.length)];
+      d.style.color = colors[Math.floor(Math.random() * colors.length)];
+      d.style.top = (Math.random() * 82 + 2) + 'vh';
+      d.style.fontSize = (16 + Math.random() * 8) + 'px';
+      var dur = 9 + Math.random() * 8; // 9-17s
+      d.style.animation = 'danmaku-fly ' + dur + 's linear forwards';
+      d.addEventListener('animationend', function () { d.remove(); });
+      layer.appendChild(d);
+      setTimeout(spawn, 900 + Math.random() * 1400);
+    }
+    for (var i = 0; i < 4; i++) setTimeout(spawn, i * 900);
+  })();
+</script>
+</body>
+</html>

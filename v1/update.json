@@ -1,0 +1,95 @@
+{
+	"code": 200,
+	"message": "success",
+	"data": {
+		"version": "v0.5.1",
+		"versionCode": 51,
+		"isForceUpdate": false,
+		"updateNote": "本次更新大幅优化播放与下载体验，新增弹幕与跨设备同步功能",
+		"changelog": {
+			"fixes": [
+				"修复部分资源进入TV番剧标签时无数据问题",
+				"修复播放器和详情页面载入过慢问题",
+				"修复更新弹窗立即下载按钮无法正常下载问题",
+				"修复使用外部资源时下载番剧功能生效问题",
+				"修复部分UI问题并对部分UI进行调整",
+				"修复部分资源下载出现异常问题"
+			],
+			"features": [
+				"新增无法播放时自动换线或源",
+				"新增弹幕默认开启选项",
+				"新增隐藏首页轮播图功能",
+				"新增进入播放页是否自动全屏播放视频",
+				"新增XPlay资源配置导入",
+				"新增CSS资源、XPlay资源资源验证检查",
+				"新增接入弹弹play开放弹幕网络",
+				"新增弹幕详细配置功能",
+				"新增弹幕资源选择",
+				"新增播放器弹幕功能",
+				"新增跨设备同步功能、设备直链同步功能"
+			]
+		},
+		"downloads": {
+			"github": {
+				"android": {
+					"universal": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-universal-release.apk",
+						"size": "24.8 MB",
+						"md5": "sha256:1945f02839d0267ea74ff84c47685e811a30faef5de4634dc4cbfc459d1d547b",
+						"description": "universal (推荐)"
+					},
+					"arm64-v8a": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-arm64-v8a-release.apk",
+						"size": "24.7 MB",
+						"md5": "sha256:f7923c78e01d93b46c14bcf8157378b36865bbcf91b502935431396d2cf6213a",
+						"description": "几乎所有手机和平板"
+					},
+					"armeabi-v7a": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-armeabi-v7a-release.apk",
+						"size": "24.7 MB",
+						"md5": "sha256:5ae44d1f4238bcec5c3d59ef88535a1bc14a78c876c37cb197f16a75024a191e",
+						"description": "旧手机"
+					},
+					"x86_64": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-x86_64-release.apk",
+						"size": "24.7 MB",
+						"md5": "sha256:ecf5a2cd00e2e6da54dae7a84ac23b091eb8c7da4e1e6ba87d6724ca3d2880cb",
+						"description": "Chromebook 及模拟器"
+					}
+				}
+			},
+			"gitee": {
+				"android": {
+					"universal": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-universal-release.apk",
+						"size": "24.8 MB",
+						"md5": "—",
+						"description": "universal (推荐)"
+					},
+					"arm64-v8a": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-arm64-v8a-release.apk",
+						"size": "24.7 MB",
+						"md5": "—",
+						"description": "几乎所有手机和平板"
+					},
+					"armeabi-v7a": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-armeabi-v7a-release.apk",
+						"size": "24.7 MB",
+						"md5": "—",
+						"description": "旧手机"
+					},
+					"x86_64": {
+						"url": "https://gitee.com/tuxiw/tuan-ying-shi/releases/download/v0.5.1/tu_v0.5.1-x86_64-release.apk",
+						"size": "24.7 MB",
+						"md5": "—",
+						"description": "Chromebook 及模拟器"
+					}
+				}
+			}
+		}
+	},
+	"website": "https://tuanyingshi.tuxiwan.cn/",
+	"github": "https://github.com/tuxiw/tuan-ying-shi/releases",
+	"gitee": "https://gitee.com/tuxiw/tuan-ying-shi/releases",
+	"publishTime": "2026-09-04"
+}
