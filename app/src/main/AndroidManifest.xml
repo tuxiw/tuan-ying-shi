@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 扫码登录：相机扫码所需（Android 6+ 运行时动态申请） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 应用内更新：安装下载的 APK 所需（Android 8+ 需在设置中为本应用开启「安装未知应用」） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 13+ 显示下载进度 / 完成通知所需；低版本忽略 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 应用内更新：前台服务下载 APK（Android 9+ 需要 FOREGROUND_SERVICE，Android 14+ 还需要对应类型权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- 读取 / 写入用户指定下载位置（共享存储）的视频文件 -->
+    <!-- Android 11+ 通过「所有文件访问」授权（MANAGE_EXTERNAL_STORAGE）覆盖任意路径的 File 读写 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <application
+        android:name=".TuanyingApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.Tuanyingshi"
+        tools:targetApi="31">
+        <!-- 启动页：全屏展示启动图后跳转主界面 -->
+        <activity
+            android:name=".ui.splash.SplashActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 应用内更新：暴露下载到应用私有 Download 目录的 APK 给系统安装器 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- 应用内更新：后台下载 APK 的前台服务（dataSync 类型） -->
+        <service
+            android:name=".util.UpdateDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 主界面（由启动页跳转而来，不再作为 LAUNCHER） -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Tuanyingshi"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+
+            <!-- 支持「用本 App 打开」视频文件 / 链接 -->
+            <!-- 方式一：按 MIME 类型匹配（文件管理器通常带 video/* 或 m3u8 类型） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="video/*" />
+                <data android:scheme="file" android:mimeType="video/*" />
+                <data android:scheme="http" android:mimeType="video/*" />
+                <data android:scheme="https" android:mimeType="video/*" />
+                <!-- HLS 播放列表（部分管理器以 application 类型传递） -->
+                <data android:scheme="content" android:mimeType="application/vnd.apple.mpegurl" />
+                <data android:scheme="http" android:mimeType="application/vnd.apple.mpegurl" />
+                <data android:scheme="https" android:mimeType="application/vnd.apple.mpegurl" />
+                <data android:scheme="content" android:mimeType="application/x-mpegurl" />
+                <data android:scheme="https" android:mimeType="application/x-mpegurl" />
+            </intent-filter>
+
+            <!-- 方式二：按扩展名匹配（部分管理器不声明 MIME，仅给出 file:///content:// 路径） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mp4" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mkv" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.avi" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mov" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.webm" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.flv" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.wmv" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.m4v" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.3gp" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ts" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.m3u8" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mp4" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mkv" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.m3u8" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.webm" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

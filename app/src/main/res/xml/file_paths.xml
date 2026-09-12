@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 应用内更新下载目录：Context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+         对应 Android/data/<package>/files/Download/ -->
+    <external-files-path
+        name="update_downloads"
+        path="Download/" />
+</paths>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.Tuanyingshi" parent="android:Theme.Material.NoActionBar" />
+
+    <!--
+        启动页专用主题（普通 NoActionBar 主题，不依赖 AndroidX SplashScreen compat 库）：
+        - android:windowBackground：冷启动瞬间由系统先绘制一层底色，覆盖进程启动前的空白/白屏。
+          用首页暗色背景色 #0E0E12，与 App 主界面风格一致。
+        - SplashActivity 在此基础上用 Compose 绘制真正的启动图（+ 跳过按钮），
+          启动图加载完成后覆盖这层底色，无缝衔接、无图标/无白闪。
+    -->
+    <style name="Theme.Splash" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
+</resources>
