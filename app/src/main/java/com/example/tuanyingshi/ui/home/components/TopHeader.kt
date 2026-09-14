@@ -15,9 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,12 +29,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 
 /**
  * 首页顶部：左头像 + 中搜索条 + 右历史/下载。
  * 设计要点：紧凑（整体 ~52dp），与参考图一致。
+ *
+ * @param avatarUrl 当前登录用户的头像绝对地址；为空（未登录 / 未设置头像 / 非后端模式）时显示人形图标。
+ * @param onAvatarClick 点击头像：由调用方打开左侧「快捷设置」抽屉。
  */
 @Composable
 fun TopHeader(
@@ -44,6 +49,8 @@ fun TopHeader(
     onSearchClick: () -> Unit,
     onHistoryClick: () -> Unit = {},
     onDownloadClick: () -> Unit = {},
+    avatarUrl: String? = null,
+    onAvatarClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -60,21 +67,29 @@ fun TopHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 头像
+            // 头像（登录后展示真实头像，加载失败/未设置时回退到人形图标）
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { /* 头像点击：进入我的 */ },
+                    .clickable { onAvatarClick() },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Filled.AccountCircle,
+                    imageVector = Icons.Filled.Person,
                     contentDescription = "头像",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(20.dp),
                 )
+                if (avatarUrl != null) {
+                    AsyncImage(
+                        model = avatarUrl,
+                        contentDescription = "头像",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
 
             // 搜索条（视觉上是只读占位符，点击进入搜索）

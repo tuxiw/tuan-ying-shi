@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.parse
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniApiService
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniAuthManager
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniVideoDto
@@ -437,10 +438,14 @@ object CycanimeSource : AnimeSource {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
-    ): List<AnimeBean> {
+    ): FilterPage<AnimeBean> {
         // 优先走筛选 API（/api/videos），失败降级到空集合，由 UI 提示。
-        return runCatching {
+        // region/type/status 为后端筛选维度，次元城接口暂不支持，忽略即可。
+        val items = runCatching {
             val response = apiService.filterVideos(
                 zoneId = zoneId,
                 tag = tag,
@@ -453,6 +458,7 @@ object CycanimeSource : AnimeSource {
             } else emptyList()
         }.onFailure { it.log(TAG, "getFilterData API failed") }
             .getOrDefault(emptyList())
+        return FilterPage(items = items, hasMore = items.size >= 20)
     }
 
     override suspend fun getWeekData(): Map<Int, List<AnimeBean>> {

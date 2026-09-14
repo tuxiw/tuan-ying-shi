@@ -44,7 +44,9 @@ sealed class DanmakuEvent {
     /**
      * 清空屏幕并以这些弹幕填充. 常见于快进/快退时
      *
-     * @param list 顺序为由距离当前时间近到远.
+     * @param list 按 [Danmaku.playTimeMillis] 升序（由旧到新）。
+     *        消费方（[com.example.tuanyingshi.danmaku.ui.DanmakuHostState.repopulate]）会按每条弹幕自己的
+     *        播放时间推算它此刻**本应处于**的位置后再装填，而不是让它们一起从屏幕右缘重新开始滚。
      * @param playTimeMillis 当前播放器的时间
      */
     data class Repopulate(val list: List<Danmaku>, val playTimeMillis: Long) : DanmakuEvent()
@@ -241,10 +243,11 @@ internal class DanmakuSessionAlgorithm(val state: DanmakuSessionFlowState) {
             ) {
                 // 移动太远, 重新装填屏幕弹幕
                 // 初次播放如果进度不是在 0 也会触发这个
+                val curTimeMillis = curTime.inWholeMilliseconds
                 val targetTime = (curTime - state.repopulateDistance()).inWholeMilliseconds
 
-                // 跳到 repopulateDistance 时间前的一个
-                state.lastIndex = list
+                // 窗口起点：最后一个 playTime < targetTime 的索引（-1 表示窗口覆盖到列表开头）
+                val windowStart = list
                     .binarySearchBy(targetTime, selector = { it.playTimeMillis })
                     .let {
                         if (it >= 0) {
@@ -255,27 +258,28 @@ internal class DanmakuSessionAlgorithm(val state: DanmakuSessionFlowState) {
                     }
                     .coerceAtLeast(-1)
 
-                // 发送所有在 repopulateDistance 时间内的弹幕
-                val curTimeMillis = curTime.inWholeMilliseconds
-                val event = DanmakuEvent.Repopulate(
-                    buildList seq@{
-                        var emitted = 0
-                        useEachDanmaku { item ->
-                            if (curTimeMillis < item.playTimeMillis) {
-                                // 还没有达到弹幕发送时间, 因为 list 是排序的, 这也说明后面的弹幕都还没到时间
-                                return@seq
-                            }
-                            if (emitted >= state.repopulateMaxCount) {
-                                return@seq
-                            }
-                            add(item)
-                            emitted++
-                        }
-                    },
-                    curTimeMillis,
-                )
-                // Send Repopulate Event
-                sendEvent(event)
+                // 收集窗口内、时间不晚于当前进度的弹幕（由旧到新）。
+                // 注意：这里必须把 lastIndex 一路推进到「当前进度」，否则窗口计数超上限时提前
+                // 结束会让上一帧的 Add 分支在下一帧把窗口里剩余的过去弹幕一次性全部补发出去，
+                // 表现为「拖动进度条后弹幕瞬间糊满屏幕」。
+                val window = ArrayList<Danmaku>()
+                var i = windowStart + 1
+                while (i <= list.lastIndex && list[i].playTimeMillis <= curTimeMillis) {
+                    window.add(list[i])
+                    i++
+                }
+                state.lastIndex = i - 1
+
+                // 窗口命中过多时只保留距离当前进度最近的 repopulateMaxCount 条，
+                // 其余更旧的弹幕即使重新装填也早已滚出屏幕，没必要发送。
+                val overflow = window.size - state.repopulateMaxCount
+                val candidates = if (overflow > 0) {
+                    window.subList(overflow, window.size).toList()
+                } else {
+                    window
+                }
+
+                sendEvent(DanmakuEvent.Repopulate(candidates, curTimeMillis))
                 return
             }
         } finally { // 总是更新

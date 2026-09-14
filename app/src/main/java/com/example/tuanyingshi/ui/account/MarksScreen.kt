@@ -30,10 +30,16 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.util.BackendPrefs
+import com.example.tuanyingshi.util.log
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
- * 我的追番：展示后端「在看 / 看过 / 抛弃」三种标记下的番剧（后端 marks 为追番状态，
- * 并非「点赞」，此处作为「我的」中该入口的后端对应功能）。
+ * 我的追番：展示后端「在看 / 看过 / 抛弃」三种标记下的番剧。
+ *
+ * 后端 [BackendClient.api.marks] 仅返回 detailUrl 列表，这里再用番剧详情接口补全标题与海报，
+ * 避免旧版「只显示裸 URL」的无意义列表；缺失详情时降级显示 id 并保留跳转能力。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +49,7 @@ fun MarksScreen(navController: NavController) {
         "WATCHED" to "看过",
         "ABANDONED" to "抛弃",
     )
-    var data by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var data by remember { mutableStateOf<Map<String, List<MarkItem>>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -55,8 +61,14 @@ fun MarksScreen(navController: NavController) {
         }
         loading = true
         runCatching {
-            groups.associate { (mark, _) ->
-                mark to (BackendClient.api.marks(mark).data.orEmpty())
+            coroutineScope {
+                groups.associate { (mark, _) ->
+                    val urls = BackendClient.api.marks(mark).data.orEmpty()
+                    val items = urls.map { url ->
+                        async { buildMarkItem(url) }
+                    }.awaitAll()
+                    mark to items
+                }
             }
         }.onSuccess { data = it; loading = false }
             .onFailure { error = it.message ?: "加载失败"; loading = false }
@@ -94,11 +106,11 @@ fun MarksScreen(navController: NavController) {
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                                 )
                             }
-                            items(list, key = { "$mark-$it" }) { detailUrl ->
+                            items(list, key = { "$mark-${it.detailUrl}" }) { item ->
                                 BackendAnimeRow(
-                                    title = detailUrl.substringAfterLast("/").ifBlank { detailUrl },
-                                    img = null,
-                                    onClick = { openAnime(navController, null, detailUrl) },
+                                    title = item.title,
+                                    img = item.img,
+                                    onClick = { openAnime(navController, null, item.detailUrl) },
                                 )
                             }
                         }
@@ -107,4 +119,25 @@ fun MarksScreen(navController: NavController) {
             }
         }
     }
+}
+
+/** 追番条目（标题 + 海报 + 原始 detailUrl / id）。 */
+private data class MarkItem(val title: String, val img: String?, val detailUrl: String)
+
+/**
+ * 由后端 marks 返回的 detailUrl（多为纯数字 id 或 `/api/v1/anime/123`）补全标题与海报。
+ * 失败 / 缺详情时降级：标题用 id，海报为 null（界面显示占位图）。
+ */
+private suspend fun buildMarkItem(detailUrl: String): MarkItem {
+    val id = detailUrl.substringAfterLast("/").takeIf { it.any { c -> c.isDigit() } } ?: detailUrl
+    return runCatching {
+        val d = BackendClient.api.animeDetail(id).data
+        val rawImg = d?.img ?: d?.imgUrl ?: d?.cover
+        MarkItem(
+            title = d?.title ?: detailUrl,
+            img = BackendPrefs.absoluteUrl(rawImg),
+            detailUrl = detailUrl,
+        )
+    }.getOrDefault(MarkItem(title = detailUrl, img = null, detailUrl = detailUrl))
+        .also { if (it.img == null) "MarksScreen: 详情缺失 $detailUrl".log("MarksScreen") }
 }

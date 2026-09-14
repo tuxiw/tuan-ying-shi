@@ -466,9 +466,14 @@ fun PlayerScreen(
                 is DanmakuEvent.Add ->
                     danmakuHostState.trySend(DanmakuPresentation(event.danmaku, false))
                 is DanmakuEvent.Repopulate -> {
-                    // 快进/快退：清空屏幕并以附近弹幕重新装填
-                    danmakuHostState.clearPresentDanmaku()
-                    event.list.forEach { danmakuHostState.trySend(DanmakuPresentation(it, false)) }
+                    // 快进/快退：清空屏幕并按「自然位置」重新装填附近弹幕。
+                    // 交给 hostState 处理——它会按每条弹幕自己的播放时间推算此刻应在的位置，
+                    // 已滚出屏幕的直接丢弃；绝不能在这里直接 forEach + trySend，否则整个窗口
+                    // 的弹幕会同一帧从右边缘一起涌出、叠成一坨（拖动进度条后糊满屏幕的根因）。
+                    danmakuHostState.repopulate(
+                        list = event.list.map { DanmakuPresentation(it, isSelf = false) },
+                        playTimeMillis = event.playTimeMillis,
+                    )
                 }
             }
         }

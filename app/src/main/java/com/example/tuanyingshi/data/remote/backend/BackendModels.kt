@@ -375,6 +375,19 @@ data class HistoryItemVO(
     val watchedAtText: String? = null,
 )
 
+data class RatingItemVO(
+    val id: Long? = null,
+    val animeId: Long? = null,
+    val title: String? = null,
+    val imgUrl: String? = null,
+    val img: String? = null,
+    val detailUrl: String? = null,
+    /** 评分（10 分制，1.0 - 10.0）；UI 5 星制按 ÷2 换算展示。 */
+    val score: Double? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+
 // ───────────────────────── 评论 ─────────────────────────
 
 data class CommentVO(
@@ -486,4 +499,18 @@ data class FeedbackRequestDTO(
     val deviceInfo: String? = null,
     /** App 版本（版本名 + 版本号），便于按版本定位问题。 */
     val appVersion: String? = null,
+)
+
+/** 番剧评分请求：detailUrl（外部源）与 animeId 至少一个；score 取 1.0 - 10.0。 */
+data class RatingRequestDTO(
+    val detailUrl: String? = null,
+    val animeId: Long? = null,
+    val title: String? = null,
+    val imgUrl: String? = null,
+    val score: Double,
+)
+
+/** 评分查询返回：未评分时 score 为 null。 */
+data class ScoreVO(
+    val score: Double? = null,
 )

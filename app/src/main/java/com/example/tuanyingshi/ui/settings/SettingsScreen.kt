@@ -34,9 +34,12 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -91,6 +94,8 @@ private fun SettingsListScreen(navController: NavController) {
     val user by BackendAccount.userState.collectAsStateWithLifecycle()
     val loggedIn = user != null
     var proxySummary by remember { mutableStateOf(ProxyHolder.summary()) }
+    // 新手引导入口易误触：用确认弹窗二次确认，避免一次轻点就全屏弹出引导页
+    var showOnboardingConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         // 外层 AppNavigation 的 Scaffold 已按 innerPadding 预留了状态栏/导航栏高度，
@@ -174,7 +179,7 @@ private fun SettingsListScreen(navController: NavController) {
                 SettingListItem(
                     icon = Icons.Filled.Star,
                     title = "新手引导",
-                    onClick = { navController.navigate(Screen.Onboarding.route) },
+                    onClick = { showOnboardingConfirm = true },
                 )
             }
 
@@ -242,6 +247,24 @@ private fun SettingsListScreen(navController: NavController) {
 
             Spacer(Modifier.height(24.dp))
         }
+
+        // 新手引导二次确认弹窗（防止误触）
+        if (showOnboardingConfirm) {
+            AlertDialog(
+                onDismissRequest = { showOnboardingConfirm = false },
+                title = { Text("查看新手引导") },
+                text = { Text("是否重新查看新手引导？引导页会覆盖全屏，需看完或主动跳过才能返回。") },
+                confirmButton = {
+                    Button(onClick = {
+                        showOnboardingConfirm = false
+                        navController.navigate(Screen.Onboarding.route)
+                    }) { Text("查看") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showOnboardingConfirm = false }) { Text("取消") }
+                },
+            )
+        }
     }
 }
 
@@ -255,6 +278,8 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
     val backendMode by BackendPrefs.enabled.collectAsStateWithLifecycle()
     val user by BackendAccount.userState.collectAsStateWithLifecycle()
     val loggedIn = user != null
+    // 新手引导入口易误触：用确认弹窗二次确认
+    var showOnboardingConfirm by remember { mutableStateOf(false) }
     var selectedId by remember { mutableStateOf("general") }
     val settingsVm: SettingsViewModel = hiltViewModel()
 
@@ -332,7 +357,7 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                 selectedId = selectedId,
                 icon = Icons.Filled.Star,
                 title = "新手引导",
-                onClick = { navController.navigate(Screen.Onboarding.route) },
+                onClick = { showOnboardingConfirm = true },
             )
 
             // 后端模式入口始终可见；后端模式下禁用数据源 / 弹幕源切换，入口隐藏（见 SourceHolder / BackendPrefs）。
@@ -440,6 +465,24 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                     GeneralSettingsContent(navController)
                 }
             }
+        }
+
+        // 新手引导二次确认弹窗（防止误触）
+        if (showOnboardingConfirm) {
+            AlertDialog(
+                onDismissRequest = { showOnboardingConfirm = false },
+                title = { Text("查看新手引导") },
+                text = { Text("是否重新查看新手引导？引导页会覆盖全屏，需看完或主动跳过才能返回。") },
+                confirmButton = {
+                    Button(onClick = {
+                        showOnboardingConfirm = false
+                        navController.navigate(Screen.Onboarding.route)
+                    }) { Text("查看") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showOnboardingConfirm = false }) { Text("取消") }
+                },
+            )
         }
     }
 }

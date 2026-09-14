@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.api
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.HomeBean
@@ -27,16 +28,19 @@ interface AnimeApi {
     fun getSearchStream(query: String, mode: SourceMode): Flow<SearchStreamState>
 
     /**
-     * 分类筛选列表（分类浏览页用）。zoneId/tag/year/orderBy 含义见 AnimeSource.getFilterData。
+     * 分类筛选列表（分类浏览页用）。zoneId/tag/year/orderBy/region/type/status 含义见 AnimeSource.getFilterData。
      */
     suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
         mode: SourceMode,
-    ): List<AnimeBean>
+    ): FilterPage<AnimeBean>
 
     suspend fun getWeekDate(): Map<Int, List<AnimeBean>>
 

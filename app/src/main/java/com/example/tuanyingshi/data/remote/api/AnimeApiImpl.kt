@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.api
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.HomeBean
@@ -138,11 +139,14 @@ class AnimeApiImpl @Inject constructor() : AnimeApi {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
         mode: SourceMode,
-    ): List<AnimeBean> {
+    ): FilterPage<AnimeBean> {
         val animeSource = SourceHolder.getSource(mode)
-        return animeSource.getFilterData(zoneId, tag, year, orderBy, page)
+        return animeSource.getFilterData(zoneId, tag, year, orderBy, region, type, status, page)
     }
 
     override suspend fun getWeekDate(): Map<Int, List<AnimeBean>> {

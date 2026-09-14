@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.parse
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.EpisodeBean
@@ -101,18 +102,22 @@ object DandanplaySource : AnimeSource {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
-    ): List<AnimeBean> {
+    ): FilterPage<AnimeBean> {
         // 弹弹play 高级搜索（search/adv）字段较多，这里用 tag / 年份拼一个关键词走 search/anime 兜底。
+        // region/type/status 为后端筛选维度，弹弹play 源不支持，忽略。
         val query = tag?.takeIf { it.isNotBlank() } ?: year?.toString() ?: ""
         if (query.isBlank()) {
             "getFilterData: query 为空，跳过".log(TAG)
-            return emptyList()
+            return FilterPage(emptyList())
         }
         val list = runCatching { DandanplayApi.searchAnime(query, page) }.getOrDefault(emptyList())
         val beans = list.mapNotNull { it.toAnimeBean() }
         "getFilterData('$query', page=$page) -> ${beans.size} 条".log(TAG)
-        return beans
+        return FilterPage(items = beans, hasMore = beans.size >= 20)
     }
 
     override suspend fun getRanking(): Map<String, List<AnimeBean>> {

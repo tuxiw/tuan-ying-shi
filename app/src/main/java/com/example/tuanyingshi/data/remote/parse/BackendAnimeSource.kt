@@ -7,6 +7,7 @@ import com.example.tuanyingshi.data.remote.backend.BannerVO
 import com.example.tuanyingshi.data.remote.backend.DanmakuItemVO
 import com.example.tuanyingshi.data.remote.backend.EpisodeVO
 import com.example.tuanyingshi.data.remote.backend.HomeSectionVO
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.EpisodeBean
@@ -97,17 +98,26 @@ object BackendAnimeSource : AnimeSource {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
-    ): List<AnimeBean> {
+    ): FilterPage<AnimeBean> {
         val q = LinkedHashMap<String, String>()
         q["zoneId"] = zoneId.toString()
         if (!tag.isNullOrBlank()) q["tag"] = tag
         if (year != null) q["year"] = year.toString()
         if (!orderBy.isNullOrBlank()) q["orderBy"] = orderBy
+        if (!region.isNullOrBlank()) q["region"] = region
+        if (!type.isNullOrBlank()) q["type"] = type
+        if (!status.isNullOrBlank()) q["status"] = status
         q["page"] = page.toString()
         q["size"] = "20"
-        val resp = runCatching { api.filterList(q).data }.getOrNull() ?: return emptyList()
-        return resp.records.orEmpty().map { it.toBean() }
+        val resp = runCatching { api.filterList(q).data }.getOrNull() ?: return FilterPage(emptyList())
+        return FilterPage(
+            items = resp.records.orEmpty().map { it.toBean() },
+            hasMore = resp.hasMore,
+        )
     }
 
     // ───────────────────────── 详情 ─────────────────────────
@@ -157,9 +167,21 @@ object BackendAnimeSource : AnimeSource {
 
     // ───────────────────────── 弹幕（供 PlayerViewModel 在后端模式下调用）─────────────────────────
 
-    suspend fun getDanmaku(animeId: Long): List<DanmakuItem> {
-        val resp = runCatching { api.danmaku(animeId = animeId, withRelated = true).data }
-            .getOrNull() ?: return emptyList()
+    /**
+     * 后端模式按「番剧 + 剧集」拉取弹幕。
+     *
+     * @param animeId    站内番剧 id（用于归属与记录）
+     * @param detailUrl  当前集的唯一地址（通常是该集视频流 url）；后端据此计算 urlHash，
+     *                  实现「每集独立弹幕」。留空则退化成 anime 级 hash（全集合用，已废弃）。
+     */
+    suspend fun getDanmaku(animeId: Long, detailUrl: String = ""): List<DanmakuItem> {
+        val resp = runCatching {
+            api.danmaku(
+                animeId = animeId,
+                detailUrl = detailUrl.ifBlank { null },
+                withRelated = false,
+            ).data
+        }.getOrNull() ?: return emptyList()
         return resp.comments.orEmpty().mapNotNull { it.toDanmakuItem() }
     }
 

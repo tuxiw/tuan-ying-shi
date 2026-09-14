@@ -30,10 +30,16 @@ internal class FixedDanmakuTrack<T : SizeSpecifiedDanmaku>(
      * @param danmaku 要放置的弹幕对象
      * @return 新的 FixedDanmaku 对象
      */
-    override fun place(danmaku: T): FixedDanmaku<T> {
+    override fun place(danmaku: T): FixedDanmaku<T> = place(danmaku, 0L)
+
+    /**
+     * 放置一条「已经显示过 [elapsedMillis]」的顶部/底部弹幕，专供 seek 后的重新装填使用。
+     * 普通发送传 [elapsedMillis] = 0，等价于原来的行为。
+     */
+    internal fun place(danmaku: T, elapsedMillis: Long): FixedDanmaku<T> {
         val upcomingDanmaku = FixedDanmaku(
             danmaku,
-            elapsedFrameTimeNanos(),
+            elapsedFrameTimeNanos() - elapsedMillis * 1_000_000L,
             trackIndex,
             trackHeight,
             trackWidth,
@@ -43,6 +49,16 @@ internal class FixedDanmakuTrack<T : SizeSpecifiedDanmaku>(
         currentDanmaku?.let(onRemoveDanmaku)  // 如果有当前弹幕，移除它
         currentDanmaku = upcomingDanmaku  // 设置新的弹幕为当前弹幕
         return upcomingDanmaku
+    }
+
+    /**
+     * 重新装填专用：按剩余显示时长放回顶部/底部弹幕。
+     * 已经显示满 [durationMillis] 的（剩余时长为 0 或负数）直接丢弃，不占轨道。
+     */
+    internal fun tryPlaceProgressed(danmaku: T, elapsedMillis: Long): FixedDanmaku<T>? {
+        if (elapsedMillis >= durationMillis) return null
+        if (!canPlace(danmaku)) return null
+        return place(danmaku, elapsedMillis)
     }
 
     /**

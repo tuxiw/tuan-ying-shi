@@ -132,7 +132,17 @@ class DanmakuHostState(
      * @return 如果发送成功则返回 true
      * @see DanmakuHostState.send
      */
-    fun trySend(danmaku: DanmakuPresentation): Boolean {
+    fun trySend(danmaku: DanmakuPresentation): Boolean = trySend(danmaku, 0L)
+
+    /**
+     * [trySend] 的内部实现，额外接受一个「已滚动/已显示时长」[elapsedMillis]。
+     *
+     * 普通发送传 0（从屏幕右缘开始滚）；seek 后的重新装填传该弹幕相对当前进度的过去时长，
+     * 让它直接出现在此刻本应处于的位置上，避免「一坨弹幕同时从右边缘涌出」。
+     *
+     * @return 如果发送成功则返回 true
+     */
+    internal fun trySend(danmaku: DanmakuPresentation, elapsedMillis: Long): Boolean {
         // 关键词屏蔽 + 去重前置过滤；任一命中则丢弃该条弹幕。
         if (matchesKeyword(danmaku.danmaku.text)) return false
         if (isDuplicateAndRemember(danmaku.danmaku.text)) return false
@@ -147,12 +157,15 @@ class DanmakuHostState(
         )
         return when (danmaku.danmaku.location) {
             DanmakuLocation.NORMAL -> {
-                val placed = floatingTracks.firstNotNullOfOrNull { it.tryPlace(styledDanmaku) }
+                val placed = floatingTracks.firstNotNullOfOrNull {
+                    it.tryPlaceProgressed(styledDanmaku, elapsedMillis)
+                }
                 if (placed != null) {
                     presentFloatingDanmaku.add(placed)
                     true
-                } else if (config.allowOverlap) {
+                } else if (config.allowOverlap && elapsedMillis == 0L) {
                     // 海量弹幕：常规放不下时，选最近已消失位置最靠右的轨道强制放置（叠加渲染）。
+                    // 重新装填（elapsedMillis > 0）时不做叠加兜底，否则又会出现整屏弹幕糊在一起。
                     val bestTrack = floatingTracks.minByOrNull { track ->
                         track.danmakuList.lastOrNull()?.screenPosX ?: Float.MAX_VALUE
                     }
@@ -165,17 +178,17 @@ class DanmakuHostState(
             }
 
             DanmakuLocation.TOP -> {
-                val floatingDanmaku = topTracks.firstNotNullOfOrNull {
-                    it.tryPlace(styledDanmaku)
+                val fixedDanmaku = topTracks.firstNotNullOfOrNull {
+                    it.tryPlaceProgressed(styledDanmaku, elapsedMillis)
                 }
-                floatingDanmaku?.also(presentFixedDanmaku::add) != null
+                fixedDanmaku?.also(presentFixedDanmaku::add) != null
             }
 
             DanmakuLocation.BOTTOM -> {
-                val floatingDanmaku = bottomTracks.firstNotNullOfOrNull {
-                    it.tryPlace(styledDanmaku)
+                val fixedDanmaku = bottomTracks.firstNotNullOfOrNull {
+                    it.tryPlaceProgressed(styledDanmaku, elapsedMillis)
                 }
-                floatingDanmaku?.also(presentFixedDanmaku::add) != null
+                fixedDanmaku?.also(presentFixedDanmaku::add) != null
             }
         }
     }
@@ -315,10 +328,13 @@ class DanmakuHostState(
     }
 
     /**
-     * 清空屏幕并以这些弹幕填充. 常见于快进/快退时
-     * Todo: 将[list] 填充到屏幕.
+     * 清空屏幕并以这些弹幕填充. 常见于快进/快退时.
      *
-     * @param list 顺序为由距离当前时间近到远.
+     * 关键点：**按每条弹幕自己的播放时间把它放回「此刻本应处于」的位置**，而不是让它从屏幕右缘
+     * 重新开始滚动。否则整个窗口（默认 10 秒）内的弹幕会在同一帧从同一条竖线上涌出、叠成一坨，
+     * 也就是「拖动进度条后弹幕糊满屏幕」的现象。
+     *
+     * @param list 由引擎给出，按播放时间升序（由旧到新）。
      * @param playTimeMillis 当前播放器的时间
      */
     suspend fun repopulate(
@@ -326,6 +342,14 @@ class DanmakuHostState(
         playTimeMillis: Long = 0L
     ) {
         clearPresentDanmaku()
+        if (list.isEmpty()) return
+
+        for (presentation in list) {
+            val elapsedMillis = playTimeMillis - presentation.danmaku.playTimeMillis
+            if (elapsedMillis < 0L) continue // 还没到播放时间，交给后续正常的 Add 流程
+            // 已滚出屏幕 / 已过显示时长的弹幕会在轨道内部被丢弃（返回 false），不占位、不显示。
+            trySend(presentation, elapsedMillis)
+        }
     }
 
     /**

@@ -372,8 +372,8 @@ class PlayerViewModel @Inject constructor(
         // - 其它源（次元城 / CSS 规则源等）：按「番名 + 集名」向弹弹play 反查 episodeId 后拉取。
         if (DanmakuPrefs.isEnabled()) {
             if (BackendPrefs.isBackendMode()) {
-                // 后端模式：弹幕统一走自建后端（按 animeId 拉取），不再使用弹弹play。
-                loadBackendDanmaku()
+                // 后端模式：弹幕统一走自建后端，并按当前集地址分集存储/读取，不再串集。
+                loadBackendDanmaku(episode.url)
             } else {
                 val isDandanEp = episode.url.startsWith("dandanplay://")
                 val animeTitle = _anime.value?.title ?: ""
@@ -415,15 +415,17 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * 后端模式：弹幕统一走自建后端 /api/v1/danmaku（按 animeId 拉取）。
-     * 后端模式下没有弹弹play 的 episodeId 编码，故直接用详情页带入的 animeId。
+     * 后端模式：弹幕统一走自建后端 /api/v1/danmaku。
+     *
+     * 关键：传入当前集的唯一地址 [episodeDetailUrl]（即该集视频流 url），后端据此计算
+     * urlHash，实现「每集独立弹幕」。此前只按 animeId 拉取会导致同一番剧所有集弹幕一致。
      */
-    private fun loadBackendDanmaku() {
+    private fun loadBackendDanmaku(episodeDetailUrl: String) {
         _danmakuItems.value = emptyList()
         _danmakuMatch.value = null
         val animeId = detailUrl.toLongOrNull() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { BackendAnimeSource.getDanmaku(animeId) }
+            runCatching { BackendAnimeSource.getDanmaku(animeId, episodeDetailUrl) }
                 .onSuccess { items -> _danmakuItems.value = items }
                 .onFailure { it.log("PlayerVM", "loadBackendDanmaku") }
         }
@@ -857,11 +859,14 @@ class PlayerViewModel @Inject constructor(
         val animeId = detailUrl.toLongOrNull()
         if (animeId == null) return "当前番剧未关联站内 ID，无法发送弹幕"
         val timeSec = positionMs / 1000.0
+        // 当前集地址：按集归属弹幕，避免与同番其它集串在一起。
+        val episodeDetailUrl = _video.value?.episodeUrl
         return withContext(Dispatchers.IO) {
             val resp = runCatching {
                 BackendClient.api.sendDanmaku(
                     DanmakuRequestDTO(
                         animeId = animeId,
+                        detailUrl = episodeDetailUrl,
                         time = timeSec,
                         mode = mode,
                         color = parseDanmakuColor(colorHex),

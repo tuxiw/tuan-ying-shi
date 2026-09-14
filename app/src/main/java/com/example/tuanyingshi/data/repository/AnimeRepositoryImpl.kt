@@ -1,6 +1,7 @@
 package com.example.tuanyingshi.data.repository
 
 import com.example.tuanyingshi.data.remote.api.AnimeApi
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.model.AnimeDetail
 import com.example.tuanyingshi.domain.model.AnimeStatus
@@ -84,13 +85,19 @@ class AnimeRepositoryImpl @Inject constructor(
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
         mode: SourceMode,
-    ): List<Anime> {
+    ): FilterPage<Anime> {
         return runCatching {
-            animeApi.getFilterData(zoneId, tag, year, orderBy, page, mode)
-                .map { it.toAnime() }
-        }.getOrDefault(emptyList())
+            val pageResult = animeApi.getFilterData(zoneId, tag, year, orderBy, region, type, status, page, mode)
+            FilterPage(
+                items = pageResult.items.map { it.toAnime() },
+                hasMore = pageResult.hasMore,
+            )
+        }.getOrDefault(FilterPage(emptyList()))
     }
 
     override suspend fun getWeekData(): Resource<Map<Int, List<Anime>>> {

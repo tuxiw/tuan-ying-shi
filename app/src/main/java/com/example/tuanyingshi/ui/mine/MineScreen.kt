@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material.icons.filled.Tune
@@ -294,6 +295,12 @@ fun MineScreen(
                             label = "我的追番",
                             modifier = Modifier.weight(1f),
                             onClick = { navController.navigate(Screen.Marks.route) },
+                        )
+                        QuickEntry(
+                            icon = Icons.Filled.Star,
+                            label = "我的评分",
+                            modifier = Modifier.weight(1f),
+                            onClick = { navController.navigate(Screen.MyRatings.route) },
                         )
                     } else {
                         QuickEntry(

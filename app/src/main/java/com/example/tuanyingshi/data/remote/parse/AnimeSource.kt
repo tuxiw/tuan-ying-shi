@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.parse
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.HomeBean
@@ -34,18 +35,24 @@ interface AnimeSource {
      * @param zoneId 分区：1=TV番组, 2=剧场番组
      * @param tag 题材标签，null 表示全部
      * @param year 年份，null 表示全部
-     * @param orderBy 排序：null=更新时间(默认), "hits"=热度, "score"=评分
+     * @param orderBy 排序：null=更新时间(默认), "hits"=热度, "score"=评分, "follow"=追番
+     * @param region 地区代码（JP/CN/US/KR），null 表示全部
+     * @param type 类型代码（SERIES/OVA），null 表示全部
+     * @param status 状态代码（ONGOING/FINISHED），null 表示全部
      * @param page 页码，从 1 开始
      *
-     * 默认空实现：仅支持结构化筛选的源（如 cycani）覆盖；其它源无需实现。
+     * 默认空实现：仅支持结构化筛选的源（如 cycani / 后端）覆盖；其它源无需实现。
      */
     suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String? = null,
+        type: String? = null,
+        status: String? = null,
         page: Int,
-    ): List<AnimeBean> = emptyList()
+    ): FilterPage<AnimeBean> = FilterPage(emptyList())
 
     suspend fun getWeekData(): Map<Int, List<AnimeBean>>
 

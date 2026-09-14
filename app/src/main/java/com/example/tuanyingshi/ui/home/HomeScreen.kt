@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.example.tuanyingshi.data.remote.backend.BackendAccount
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.model.HomeBanner
 import com.example.tuanyingshi.ui.components.CenteredMessage
@@ -42,6 +43,7 @@ import com.example.tuanyingshi.ui.home.components.HotRecommendCard
 import com.example.tuanyingshi.ui.home.components.SectionHeader
 import com.example.tuanyingshi.ui.home.components.TopHeader
 import com.example.tuanyingshi.ui.navigation.Screen
+import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.ContentPrefs
 import kotlinx.coroutines.launch
 
@@ -49,12 +51,18 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     navController: NavController,
+    onAvatarClick: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val categories = HomeCategory.values().toList()
     val scope = rememberCoroutineScope()
+
+    // 顶栏头像：后端模式且已登录时展示后端头像，点击打开左侧「快捷设置」抽屉
+    val backendMode by BackendPrefs.enabled.collectAsStateWithLifecycle()
+    val account by BackendAccount.userState.collectAsStateWithLifecycle()
+    val avatarUrl = if (backendMode) BackendPrefs.absoluteUrl(account?.avatar) else null
 
     // 数据源切换后，主动重新拉取首页数据；同源重复进入不重复加载（去重在 ViewModel 内完成）。
     val sourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
@@ -81,6 +89,8 @@ fun HomeScreen(
                 onSearchClick = { navController.navigate(Screen.Search.route) },
                 onHistoryClick = { navController.navigate(Screen.History.route) },
                 onDownloadClick = { navController.navigate(Screen.Downloads.route) },
+                avatarUrl = avatarUrl,
+                onAvatarClick = onAvatarClick,
             )
                 CategoryTabs(
                     categories = categories,

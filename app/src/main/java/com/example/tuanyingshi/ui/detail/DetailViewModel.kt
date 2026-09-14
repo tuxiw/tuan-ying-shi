@@ -3,7 +3,12 @@ package com.example.tuanyingshi.ui.detail
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.os.Build
+import com.example.tuanyingshi.BuildConfig
 import com.example.tuanyingshi.data.local.entity.HistoryEntity
+import com.example.tuanyingshi.data.remote.backend.BackendClient
+import com.example.tuanyingshi.data.remote.backend.FeedbackRequestDTO
+import com.example.tuanyingshi.data.remote.backend.RatingRequestDTO
 import com.example.tuanyingshi.data.repository.FavoriteRepository
 import com.example.tuanyingshi.data.repository.HistoryRepository
 import com.example.tuanyingshi.domain.model.Anime
@@ -11,6 +16,7 @@ import com.example.tuanyingshi.domain.model.AnimeDetail
 import com.example.tuanyingshi.domain.model.Episode
 import com.example.tuanyingshi.domain.model.SourceCandidate
 import com.example.tuanyingshi.domain.repository.AnimeRepository
+import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.Resource
 import com.example.tuanyingshi.util.SourceHolder
 import com.example.tuanyingshi.util.SourceMode
@@ -80,9 +86,17 @@ class DetailViewModel @Inject constructor(
     private val _isFavorite = MutableStateFlow(false)
     val isFavorite: StateFlow<Boolean> = _isFavorite.asStateFlow()
 
-    // 用户评分（会话级；仅保存在内存，后续接后端做持久化）
+    // 用户评分（星级 1-5）。后端模式且已登录时与后端同步（存入 10 分制），否则仅本地会话级。
     private val _userRating = MutableStateFlow<Float?>(null)
     val userRating: StateFlow<Float?> = _userRating.asStateFlow()
+
+    /** 一次性提示（评分 / 报错结果），UI 展示后调用 [consumeMessage] 清空。 */
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    fun consumeMessage() {
+        _message.value = null
+    }
 
     /** 该番剧的最近观看记录（用于「继续观看」按钮）。 */
     val lastWatched: StateFlow<HistoryEntity?> = historyRepository.observeHistory()
@@ -146,6 +160,23 @@ class DetailViewModel @Inject constructor(
             }
             _isFavorite.value = favoriteRepository.isFavorite(detailUrl)
         }
+
+        // 后端模式 + 已登录：回填「我的评分」，让详情页评分入口显示历史评分
+        loadMyRating()
+    }
+
+    /** 拉取当前用户对该番剧的评分（后端模式 + 已登录时有效）。 */
+    private fun loadMyRating() {
+        if (!BackendPrefs.isBackendMode() || !BackendPrefs.isLoggedIn || detailUrl.isBlank()) return
+        viewModelScope.launch {
+            val score = runCatching { BackendClient.api.myRating(detailUrl = detailUrl) }
+                .getOrNull()
+                ?.takeIf { it.ok }
+                ?.data?.score
+                ?: return@launch
+            // 后端存 10 分制，UI 用 5 星制
+            _userRating.value = (score / 2.0).toFloat()
+        }
     }
 
     /** 切换线路：更新选中索引并刷新选集（保持当前播放进度不清空）。 */
@@ -208,8 +239,37 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 提交用户评分（星级 1-5）。
+     *
+     * <p>后端模式且已登录时上报后端（转 10 分制存储并跨设备同步）；否则仅本地会话级，
+     * 并通过 [message] 告知用户未同步。
+     */
     fun setUserRating(rating: Float) {
         _userRating.value = rating
+        if (!BackendPrefs.isBackendMode() || !BackendPrefs.isLoggedIn) {
+            _message.value = "已记录评分（本地模式，未同步到账号）"
+            return
+        }
+        val d = _detail.value
+        viewModelScope.launch {
+            val res = runCatching {
+                BackendClient.api.setRating(
+                    RatingRequestDTO(
+                        detailUrl = detailUrl,
+                        title = d?.title,
+                        imgUrl = d?.img,
+                        // 5 星制 → 10 分制
+                        score = (rating * 2.0),
+                    ),
+                )
+            }.getOrNull()
+            _message.value = when {
+                res == null -> "评分失败，请检查网络"
+                res.ok -> "评分成功"
+                else -> res.message ?: "评分失败"
+            }
+        }
     }
 
     /** 打开详情即记一条浏览历史（仅首次写入，不覆盖已有的播放进度）。 */
@@ -222,8 +282,45 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // Mock：当前无后端上报接口，直接视为已提交；后续接入后端 /api/report 上报。
+    /**
+     * 提交「报错」反馈。
+     *
+     * <p>后端模式且已登录时，复用后端反馈接口（{@code POST /api/v1/ops/feedback}，
+     * category=CONTENT），内容里带上番剧标题、报错类型与详情地址，管理端「用户反馈」可查。
+     * 未登录 / 非后端模式时通过 [message] 提示需要登录。
+     */
     fun submitReport(type: String) {
-        // TODO: 接入后端报错上报接口
+        if (!BackendPrefs.isBackendMode() || !BackendPrefs.isLoggedIn) {
+            _message.value = if (BackendPrefs.isBackendMode()) {
+                "请先登录后端账号后再提交"
+            } else {
+                "请开启后端模式并登录后再提交反馈"
+            }
+            return
+        }
+        val title = _detail.value?.title.orEmpty()
+        val content = buildString {
+            append("【番剧报错】")
+            if (title.isNotBlank()) append("《$title》")
+            append("问题类型：").append(type)
+            if (detailUrl.isNotBlank()) append("\n详情页：").append(detailUrl)
+        }
+        viewModelScope.launch {
+            val res = runCatching {
+                BackendClient.api.submitFeedback(
+                    FeedbackRequestDTO(
+                        content = content,
+                        category = "CONTENT",
+                        deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}",
+                        appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    ),
+                )
+            }.getOrNull()
+            _message.value = when {
+                res == null -> "提交失败，请检查网络"
+                res.ok -> "已提交反馈，感谢您的反馈"
+                else -> res.message ?: "提交失败"
+            }
+        }
     }
 }

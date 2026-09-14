@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -39,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.util.BackendPrefs
+import com.example.tuanyingshi.util.BackendPushPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -162,6 +164,25 @@ fun BackendSettingsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+
+        // 后端模式专属推送开关：软件更新推送 / 公告推送（默认开启，可单独关闭）
+        val updatePush by BackendPushPrefs.updatePushEnabled.collectAsStateWithLifecycle()
+        val announcementPush by BackendPushPrefs.announcementPushEnabled.collectAsStateWithLifecycle()
+
+        SwitchRow(
+            icon = Icons.Filled.Cloud,
+            title = "接收软件更新推送",
+            desc = "开启后，应用启动会自动检查后端下发的版本更新",
+            checked = updatePush,
+            onCheckedChange = { BackendPushPrefs.setUpdatePushEnabled(it) },
+        )
+        SwitchRow(
+            icon = Icons.Filled.Notifications,
+            title = "接收公告推送",
+            desc = "开启后，应用启动会弹出后端发布的公告",
+            checked = announcementPush,
+            onCheckedChange = { BackendPushPrefs.setAnnouncementPushEnabled(it) },
         )
     }
 

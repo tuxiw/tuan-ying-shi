@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.data.remote.parse
 
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.HomeBean
@@ -30,8 +31,11 @@ class RuleBasedAnimeSource(private val rule: SourceRule) : AnimeSource {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
-    ): List<AnimeBean> = CycanimeSource.getFilterData(zoneId, tag, year, orderBy, page)
+    ): FilterPage<AnimeBean> = CycanimeSource.getFilterData(zoneId, tag, year, orderBy, region, type, status, page)
     override suspend fun getRanking(): Map<String, List<AnimeBean>> = CycanimeSource.getRanking()
 
     // ── 详情页：元数据走次元城，剧集走 CSS ──

@@ -64,6 +64,8 @@ sealed class Screen(val route: String) {
     object Favorites : Screen("favorites")
     /** 后端模式：我的追番（在看 / 看过 / 抛弃）。 */
     object Marks : Screen("marks")
+    /** 后端模式：我的评分。 */
+    object MyRatings : Screen("my_ratings")
     /** 后端模式：帮助与反馈。 */
     object Feedback : Screen("feedback")
     /** 后端模式：账号管理（头像 / 昵称 / 签名 / 修改密码）。 */

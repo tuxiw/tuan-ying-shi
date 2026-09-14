@@ -67,6 +67,10 @@ interface BackendApiService {
     @GET("filter/list")
     suspend fun filterList(@QueryMap query: Map<String, String>): ApiResp<ApiPage<AnimeCardVO>>
 
+    /** 筛选面板选项（题材 / 年份 / 地区 / 类型 / 状态 / 排序），一次返回，客户端无需硬编码。 */
+    @GET("filter/options")
+    suspend fun filterOptions(): ApiResp<FilterOptionsVO>
+
     /** 弹幕：兼容弹弹play 返回结构；按 animeId 拉取。 */
     @GET("danmaku")
     suspend fun danmaku(
@@ -199,6 +203,25 @@ interface BackendApiService {
     /** 设置 / 取消标记（mark 传空串取消）。 */
     @POST("user/marks/mark")
     suspend fun setMark(@Body req: MarkRequestDTO): ApiResp<Map<String, Any?>>
+
+    // ───────────────────────── 番剧评分（1.0 - 10.0）─────────────────────────
+
+    /** 评分 / 修改评分（需登录）。detailUrl 与 animeId 至少传一个；重复评分覆盖为最新。 */
+    @POST("user/ratings")
+    suspend fun setRating(@Body req: RatingRequestDTO): ApiResp<ScoreVO>
+
+    /** 查询当前用户对某内容的评分（需登录）；未评分时 data.score 为 null。 */
+    @GET("user/ratings/one")
+    suspend fun myRating(
+        @Query("animeId") animeId: Long? = null,
+        @Query("detailUrl") detailUrl: String? = null,
+    ): ApiResp<ScoreVO>
+
+    /** 查询当前用户的全部评分（按更新时间倒序，后端默认最多 500 条）。 */
+    @GET("user/ratings/all")
+    suspend fun myRatings(
+        @Query("limit") limit: Int = 50,
+    ): ApiResp<List<RatingItemVO>>
 
     // ───────────────────────── 反馈 ─────────────────────────
 

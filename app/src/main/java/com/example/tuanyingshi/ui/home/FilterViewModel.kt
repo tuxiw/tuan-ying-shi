@@ -3,10 +3,10 @@ package com.example.tuanyingshi.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.tuanyingshi.data.repository.ContentFilterRepository
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.repository.AnimeRepository
 import com.example.tuanyingshi.util.SourceHolder
-import com.example.tuanyingshi.util.SEARCH_PAGE_SIZE
 import com.example.tuanyingshi.util.isNsfw
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -40,6 +40,9 @@ class FilterViewModel @Inject constructor(
         val tag: String? = null,
         val year: Int? = null,
         val orderBy: String? = null,
+        val region: String? = null,
+        val type: String? = null,
+        val status: String? = null,
     )
 
     private data class LoadStatus(val isLoading: Boolean, val isError: Boolean)
@@ -93,10 +96,19 @@ class FilterViewModel @Inject constructor(
         reload()
     }
 
-    fun setFilters(tag: String?, year: Int?, orderBy: String?) {
+    fun setFilters(
+        tag: String?,
+        year: Int?,
+        orderBy: String?,
+        region: String? = null,
+        type: String? = null,
+        status: String? = null,
+    ) {
         val cur = _params.value
-        if (cur.tag == tag && cur.year == year && cur.orderBy == orderBy) return
-        _params.value = cur.copy(tag = tag, year = year, orderBy = orderBy)
+        if (cur.tag == tag && cur.year == year && cur.orderBy == orderBy &&
+            cur.region == region && cur.type == type && cur.status == status
+        ) return
+        _params.value = cur.copy(tag = tag, year = year, orderBy = orderBy, region = region, type = type, status = status)
         hasLoaded = true
         reload()
     }
@@ -137,14 +149,17 @@ class FilterViewModel @Inject constructor(
                     tag = p.tag,
                     year = p.year,
                     orderBy = p.orderBy,
+                    region = p.region,
+                    type = p.type,
+                    status = p.status,
                     page = 1,
                     mode = SourceHolder.currentSourceMode,
                 )
-            }.onFailure { failed = true }.getOrDefault(emptyList())
+            }.onFailure { failed = true }.getOrDefault(FilterPage(emptyList()))
             page = 1
-            _items.value = list
-            _canLoadMore.value = list.isNotEmpty()
-            _isError.value = failed && list.isEmpty()
+            _items.value = list.items
+            _canLoadMore.value = list.hasMore
+            _isError.value = failed && list.items.isEmpty()
             _isLoading.value = false
         }
     }
@@ -158,20 +173,23 @@ class FilterViewModel @Inject constructor(
         moreJob = viewModelScope.launch {
             _isLoadingMore.value = true
             var failed = false
-            val list = runCatching {
+            val pageResult = runCatching {
                 animeRepository.getFilterPage(
                     zoneId = p.zoneId,
                     tag = p.tag,
                     year = p.year,
                     orderBy = p.orderBy,
+                    region = p.region,
+                    type = p.type,
+                    status = p.status,
                     page = nextPage,
                     mode = SourceHolder.currentSourceMode,
                 )
-            }.onFailure { failed = true }.getOrDefault(emptyList())
-            if (list.isNotEmpty()) {
+            }.onFailure { failed = true }.getOrDefault(FilterPage(emptyList()))
+            if (pageResult.items.isNotEmpty()) {
                 page = nextPage
-                _items.value = (_items.value + list).distinctBy { it.detailUrl }
-                _canLoadMore.value = list.size >= SEARCH_PAGE_SIZE
+                _items.value = (_items.value + pageResult.items).distinctBy { it.detailUrl }
+                _canLoadMore.value = pageResult.hasMore
             } else {
                 // 空页：正常末页则停止，失败则保留可重试
                 _canLoadMore.value = failed

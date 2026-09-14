@@ -6,12 +6,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,6 +40,8 @@ import com.example.tuanyingshi.ui.components.NavigationRailBar
 import com.example.tuanyingshi.ui.components.isTablet
 import com.example.tuanyingshi.ui.detail.DetailScreen
 import com.example.tuanyingshi.ui.home.HomeScreen
+import com.example.tuanyingshi.ui.home.components.HomeQuickDrawerContent
+import kotlinx.coroutines.launch
 import com.example.tuanyingshi.ui.schedule.ScheduleScreen
 import com.example.tuanyingshi.ui.mine.MineScreen
 import com.example.tuanyingshi.ui.player.PlayerScreen
@@ -70,6 +76,7 @@ import com.example.tuanyingshi.ui.account.LoginScreen
 import com.example.tuanyingshi.ui.account.QrScanScreen
 import com.example.tuanyingshi.ui.account.FavoritesScreen
 import com.example.tuanyingshi.ui.account.MarksScreen
+import com.example.tuanyingshi.ui.account.MyRatingsScreen
 import com.example.tuanyingshi.ui.account.FeedbackScreen
 import com.example.tuanyingshi.ui.account.AccountManageScreen
 import com.example.tuanyingshi.ui.components.AnnouncementDialog
@@ -82,14 +89,26 @@ import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.OnboardingPrefs
 import com.example.tuanyingshi.util.NetworkMonitor
 import com.example.tuanyingshi.util.NotifPrefs
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import com.example.tuanyingshi.util.BackendPushPrefs
 import com.example.tuanyingshi.util.CategoryFilterState
 import com.example.tuanyingshi.util.ContentPrefs
+import com.example.tuanyingshi.util.PermissionPrefs
+import com.example.tuanyingshi.util.rememberStorageAccessRequester
 
 @Composable
 fun AppNavigation() {
@@ -132,16 +151,50 @@ fun AppNavigation() {
     }
 
     // 后端模式：启动时拉取后端弹窗公告（forceShow=1 每次都弹，否则同一条只弹一次）
+    // 受「后端公告推送」开关约束：关闭后不再自动弹出后端公告。
     var backendAnnounce by remember { mutableStateOf<AnnouncementVO?>(null) }
     LaunchedEffect(Unit) {
         // 与本地公告一致：先看新手引导，避免首屏两个弹窗叠在一起
-        if (!BackendPrefs.isBackendMode() || !OnboardingPrefs.hasShown()) return@LaunchedEffect
+        if (!BackendPrefs.isBackendMode() || !OnboardingPrefs.hasShown() || !BackendPushPrefs.isAnnouncementPushEnabled()) return@LaunchedEffect
         val ann = runCatching { BackendClient.api.announcementPopup() }
             .getOrNull()
             ?.takeIf { it.ok }
             ?.data
         if (ann != null && (ann.forced || !AnnouncePrefs.hasRead(ann.id))) {
             backendAnnounce = ann
+        }
+    }
+
+    // 首次启动（已看过新手引导且本版本尚未展示过权限说明）：弹出「权限说明」，
+    // 介绍存储 / 通知权限用途并一次性申请；避免「用到才申请」导致下载 / 本地播放 / 下载通知异常。
+    // 相机权限（扫码登录）保持按需申请，不在此处请求。
+    val onboardingShown by OnboardingPrefs.shown.collectAsStateWithLifecycle()
+    var showPermissionIntro by remember { mutableStateOf(false) }
+    LaunchedEffect(onboardingShown) {
+        // 不与本地公告同时弹出：若本地「免费说明」公告正在展示，则等其关闭后再弹权限说明
+        if (onboardingShown && !PermissionPrefs.introShown() && !showAnnounce) {
+            showPermissionIntro = true
+        }
+    }
+
+    // 通知权限申请器（仅 Android 13+ 会真正弹窗；结果不论授权与否都结束首启流程）
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        PermissionPrefs.markIntroShown()
+        showPermissionIntro = false
+    }
+
+    // 存储权限申请器：Android 11+ 跳转「所有文件访问」设置页，Android 6~10 申请 READ_EXTERNAL_STORAGE。
+    // 存储授权结果返回后，若还需通知权限则继续申请，否则结束首启流程。
+    val storageRequester = rememberStorageAccessRequester { granted ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            PermissionPrefs.markIntroShown()
+            showPermissionIntro = false
         }
     }
 
@@ -167,6 +220,26 @@ fun AppNavigation() {
     // 平板/折叠屏：只在底部 4 个主 Tab 页面显示左侧 NavigationRail；
     // 二级页面（详情/播放/设置/搜索等）与手机一致，不显示 Rail，靠返回按钮导航。
     val isRail = isTablet() && Screen.bottomRoutes.contains(currentRoute)
+
+    // 首页头像点开的左侧「快捷设置」抽屉：包裹整页，遮罩能盖住底部导航栏 / 侧边 Rail。
+    // 只由点击头像触发，不开启边缘滑动，避免与首页分类横滑、播放器手势互相抢事件。
+    //
+    // ⚠️ gesturesEnabled 必须「仅在抽屉打开时为 true」：Material3 的 ModalNavigationDrawer 把内置
+    // Scrim 的点击关闭回调和 gesturesEnabled 绑在一起（源码里是 `if (gesturesEnabled && …) close()`），
+    // 一旦写死 false，点抽屉外的空白处就完全不响应。这里打开时置 true 让遮罩可点关闭，
+    // 关闭时置 false 保持「不抢滑动手势」（否则播放器的横滑手势会被抽屉吃掉）。
+    val quickDrawerState = rememberDrawerState(DrawerValue.Closed)
+    val appScope = rememberCoroutineScope()
+    ModalNavigationDrawer(
+        drawerState = quickDrawerState,
+        gesturesEnabled = quickDrawerState.isOpen,
+        drawerContent = {
+            HomeQuickDrawerContent(
+                navController = navController,
+                onClose = { appScope.launch { quickDrawerState.close() } },
+            )
+        },
+    ) {
     Row(Modifier.fillMaxSize()) {
         if (isRail) {
             NavigationRailBar(navController, currentRoute)
@@ -232,7 +305,7 @@ fun AppNavigation() {
                 exitTransition = { ExitTransition.None },
                 popEnterTransition = { EnterTransition.None },
                 popExitTransition = { ExitTransition.None },
-            ) { HomeScreen(navController) }
+            ) { HomeScreen(navController, onAvatarClick = { appScope.launch { quickDrawerState.open() } }) }
             composable(Screen.Onboarding.route) { OnboardingScreen(navController) }
             composable(
                 Screen.Schedule.route,
@@ -313,6 +386,7 @@ fun AppNavigation() {
             composable(Screen.QrScan.route) { QrScanScreen(navController) }
             composable(Screen.Favorites.route) { FavoritesScreen(navController) }
             composable(Screen.Marks.route) { MarksScreen(navController) }
+            composable(Screen.MyRatings.route) { MyRatingsScreen(navController) }
             composable(Screen.Feedback.route) { FeedbackScreen(navController) }
             composable(Screen.AccountManage.route) { AccountManageScreen(navController) }
 
@@ -390,12 +464,17 @@ fun AppNavigation() {
         }
     }
     }
+    }
 
     if (showAnnounce) {
         AnnouncementDialog(
             onDismiss = {
                 AnnouncePrefs.markShown()
                 showAnnounce = false
+                // 本地公告关闭后，若首启权限说明尚未展示，则紧接着弹出（避免两个弹窗叠在一起）
+                if (onboardingShown && !PermissionPrefs.introShown()) {
+                    showPermissionIntro = true
+                }
             },
         )
     }
@@ -417,6 +496,37 @@ fun AppNavigation() {
         state = updateDialog,
         onDismiss = { com.example.tuanyingshi.util.UpdateChecker.dismiss() },
     )
+
+    // 首启权限说明弹窗：介绍存储 / 通知权限用途，点击「授权」依次申请
+    if (showPermissionIntro) {
+        AlertDialog(
+            onDismissRequest = {
+                // 点击空白处 / 返回键关闭也视为「本次不再提示」，避免反复打扰
+                PermissionPrefs.markIntroShown()
+                showPermissionIntro = false
+            },
+            title = { Text("权限说明") },
+            text = {
+                Text(
+                    "为了给你更完整的功能体验，本应用需要以下权限：\n\n" +
+                        "• 存储权限：用于把番剧下载到你指定的文件夹，以及播放手机本地已下载的视频。\n" +
+                        "• 通知权限：用于在下载番剧时，在状态栏显示下载进度与完成提醒。\n\n" +
+                        "相机权限（扫码登录）将在你实际用到时再申请。",
+                )
+            },
+            confirmButton = {
+                Button(onClick = { storageRequester.request() }) { Text("授权") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        PermissionPrefs.markIntroShown()
+                        showPermissionIntro = false
+                    },
+                ) { Text("暂不") }
+            },
+        )
+    }
 }
 
 /** 从 Compose 的 Context 向上回溯拿到宿主 Activity（兼容 ContextWrapper 包装）。 */

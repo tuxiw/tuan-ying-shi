@@ -67,7 +67,13 @@ internal class FloatingDanmakuTrack<T : SizeSpecifiedDanmaku>(
      * @param danmaku 要放置的弹幕对象。
      * @return 已放置的初始化的 [FloatingDanmaku] 对象。
      */
-    override fun place(danmaku: T): FloatingDanmaku<T> {
+    override fun place(danmaku: T): FloatingDanmaku<T> = place(danmaku, 0L)
+
+    /**
+     * 放置一条「已经滚动过 [elapsedMillis]」的弹幕，专供 seek 后的重新装填使用。
+     * 普通发送传 [elapsedMillis] = 0，等价于原来的行为（从屏幕右缘开始滚）。
+     */
+    internal fun place(danmaku: T, elapsedMillis: Long): FloatingDanmaku<T> {
         return FloatingDanmaku(
             danmaku,
             trackIndex = trackIndex,
@@ -75,8 +81,24 @@ internal class FloatingDanmakuTrack<T : SizeSpecifiedDanmaku>(
             trackWidth = trackWidth,
             density = density,
             baseSpeedPxPerSecond = baseSpeedPxPerSecond,
-            placeTimeNanos = elapsedFrameTimeNanos()
+            placeTimeNanos = elapsedFrameTimeNanos() - elapsedMillis * 1_000_000L,
+            initialElapsedMillis = elapsedMillis,
         ).also { danmakuList.add(it) }
+    }
+
+    /**
+     * 重新装填专用：在轨道上放回一条「已经滚动过 [elapsedMillis]」的弹幕。
+     * 与 [tryPlace] 的区别是它会跳过那些按时间推算**早已滚出屏幕左缘**的弹幕（返回 `null`），
+     * 既不占用轨道，也不会在屏幕上留下一条看不见却挡路的空弹幕。
+     */
+    internal fun tryPlaceProgressed(danmaku: T, elapsedMillis: Long): FloatingDanmaku<T>? {
+        if (!canPlace(danmaku)) return null
+        val placed = place(danmaku, elapsedMillis)
+        if (placed.screenPosX + danmaku.danmakuWidth <= 0f) {
+            danmakuList.remove(placed)
+            return null
+        }
+        return placed
     }
 
     /**
@@ -141,6 +163,11 @@ internal class FloatingDanmaku<T : SizeSpecifiedDanmaku>(
     private val trackWidth: Int,
     private val density: Density,
     private val baseSpeedPxPerSecond: Float,
+    /**
+     * 该弹幕被放置时「已经滚动」的时长（毫秒）。
+     * seek 后重新装填时用它把弹幕直接放回自然位置；普通发送恒为 0。
+     */
+    initialElapsedMillis: Long = 0L,
 ) {
     /**
      * 弹幕初始时所在的位置，默认为轨道宽度[trackWidth]
@@ -161,17 +188,20 @@ internal class FloatingDanmaku<T : SizeSpecifiedDanmaku>(
     val screenPosY = trackHeight.toFloat() * trackIndex
 
     /**
-     * 弹幕在屏幕上的 X 坐标位置. 初始位置为轨道宽度 (即弹幕刚好在屏幕右侧边缘).
-     * 使用 `mutableFloatStateOf` 以确保该值是可变且可组合的状态.
-     */
-    var screenPosX by mutableFloatStateOf(placePosition)
-
-    /**
      * 弹幕的速度, 以像素每秒为单位.
      * Unit px/s
      */
     var speedPxPerSecond =
         calculateLengthBasedSpeed(danmaku.danmakuWidth.toFloat(), density, baseSpeedPxPerSecond)
+
+    /**
+     * 弹幕在屏幕上的 X 坐标位置. 初始位置为轨道宽度 (即弹幕刚好在屏幕右侧边缘).
+     * 重新装填时按 [initialElapsedMillis] 直接推进到自然位置，避免一坨弹幕同时从右缘涌出。
+     * 使用 `mutableFloatStateOf` 以确保该值是可变且可组合的状态.
+     */
+    var screenPosX by mutableFloatStateOf(
+        placePosition - speedPxPerSecond * (initialElapsedMillis / 1000f)
+    )
 
     /**
      * 在每一帧更新弹幕的位置.

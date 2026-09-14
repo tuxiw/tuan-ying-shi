@@ -54,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,10 +114,19 @@ fun DetailScreen(
     val channelsLoading by viewModel.channelsLoading.collectAsStateWithLifecycle()
     val isFavorite by viewModel.isFavorite.collectAsStateWithLifecycle()
     val userRating by viewModel.userRating.collectAsStateWithLifecycle()
+    val actionMessage by viewModel.message.collectAsStateWithLifecycle()
     val lastWatched by viewModel.lastWatched.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // 评分 / 报错的后端结果统一用 Snackbar 反馈；展示后清空，保证同样的文案下次还能再弹
+    LaunchedEffect(actionMessage) {
+        actionMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeMessage()
+        }
+    }
     val downloadViewModel: DownloadViewModel = hiltViewModel()
     val context = LocalContext.current
     val online by com.example.tuanyingshi.util.NetworkMonitor.isOnline.collectAsStateWithLifecycle()
@@ -565,9 +575,6 @@ fun DetailScreen(
                 TextButton(onClick = {
                     viewModel.submitReport(selected)
                     showReport = false
-                    scope.launch {
-                        snackbarHostState.showSnackbar("已提交反馈，感谢您的反馈")
-                    }
                 }) { Text("提交") }
             },
             dismissButton = {

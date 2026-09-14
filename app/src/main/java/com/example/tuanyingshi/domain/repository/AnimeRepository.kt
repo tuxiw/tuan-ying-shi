@@ -7,6 +7,7 @@ import com.example.tuanyingshi.domain.model.AnimeType
 import com.example.tuanyingshi.domain.model.Home
 import com.example.tuanyingshi.domain.model.Region
 import com.example.tuanyingshi.domain.model.WebVideo
+import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.util.Resource
 import com.example.tuanyingshi.util.Result
 import com.example.tuanyingshi.util.SearchStreamState
@@ -50,9 +51,12 @@ interface AnimeRepository {
         tag: String?,
         year: Int?,
         orderBy: String?,
+        region: String?,
+        type: String?,
+        status: String?,
         page: Int,
         mode: SourceMode,
-    ): List<Anime>
+    ): FilterPage<Anime>
 
     suspend fun getWeekData(): Resource<Map<Int, List<Anime>>>
 

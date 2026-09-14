@@ -15,6 +15,8 @@ import com.example.tuanyingshi.util.source_rule.SourceSubscriptionRepository
 import com.example.tuanyingshi.util.applyProxy
 import com.example.tuanyingshi.util.UpdateChecker
 import com.example.tuanyingshi.util.UpdatePrefs
+import com.example.tuanyingshi.util.BackendPrefs
+import com.example.tuanyingshi.util.BackendPushPrefs
 import okhttp3.OkHttpClient
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -59,9 +61,10 @@ class TuanyingApp : Application(), ImageLoaderFactory {
         // 启动后若开启 WebDAV 同步且勾选「启动时自动同步」，则执行一次双向同步
         WebDavSync.runDue(this)
 
-        // 启动后若开启「自动检查更新」，则静默检查一次（仅在发现新版本时才弹窗）
+        // 启动后若开启「自动检查更新」，则静默检查一次（仅在发现新版本时才弹窗）。
+        // 后端模式下受「后端软件更新推送」开关约束：关闭后不再自动检查后端下发的版本更新。
         appScope.launch {
-            if (UpdatePrefs.isAutoCheckEnabled()) {
+            if (UpdatePrefs.isAutoCheckEnabled() && (!BackendPrefs.isBackendMode() || BackendPushPrefs.isUpdatePushEnabled())) {
                 UpdateChecker.check(manual = false)
             }
         }
