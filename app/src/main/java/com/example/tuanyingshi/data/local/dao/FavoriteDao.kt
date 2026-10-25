@@ -26,4 +26,7 @@ interface FavoriteDao {
 
     @Query("DELETE FROM favourite_table WHERE detail_url = :detailUrl")
     suspend fun delete(detailUrl: String)
+
+    @Query("DELETE FROM favourite_table")
+    suspend fun deleteAll()
 }

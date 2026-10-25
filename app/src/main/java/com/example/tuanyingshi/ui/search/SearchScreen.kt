@@ -35,14 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
-import android.net.Uri
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.ui.components.CenteredMessage
 import com.example.tuanyingshi.ui.components.adaptiveMinCardWidth
@@ -51,6 +46,7 @@ import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.SourceHolder
 import com.example.tuanyingshi.util.SourceMode
 import com.example.tuanyingshi.ui.components.rememberCaptchaInputHost
+import com.example.tuanyingshi.ui.search.hanime1.Hanime1SearchContent
 import com.example.tuanyingshi.util.source_rule.KazumiWebViewVerifier
 
 /**
@@ -76,6 +72,12 @@ fun SearchScreen(
     }
     DisposableEffect(Unit) {
         onDispose { KazumiWebViewVerifier.captchaInputProvider = null }
+    }
+
+    // Hanime1 主数据源：整页切换为 Han1meViewer 风格高级搜索（自带顶栏 + 筛选面板 + 结果网格）。
+    if (SourceHolder.currentSourceMode == SourceMode.Hanime1) {
+        Hanime1SearchContent(navController = navController)
+        return
     }
 
     Scaffold(
@@ -151,14 +153,7 @@ fun SearchScreen(
                         CenteredMessage("搜索中…")
                     }
                 state.results.isEmpty() -> {
-                    if (SourceHolder.currentSourceMode == SourceMode.Girigiri && query.isNotBlank()) {
-                        GirigiriVerifyFallback(
-                            query = query,
-                            onRetry = { viewModel.onSearch() },
-                        )
-                    } else {
-                        CenteredMessage("没有找到相关番剧")
-                    }
+                    CenteredMessage("没有找到相关番剧")
                 }
                 else -> {
                     LazyVerticalGrid(
@@ -236,52 +231,5 @@ private fun LoadMoreButton(isLoadingMore: Boolean, onLoadMore: () -> Unit) {
             .padding(vertical = 8.dp),
     ) {
         Text(if (isLoadingMore) "加载中…" else "加载更多")
-    }
-}
-
-/**
- * Girigiri 搜索空结果兜底：直接内嵌展示 Girigiri 搜索页，让用户在网页里完成
- * Cloudflare / 验证码校验。校验通过后 CookieManager 会保存 cf_clearance，
- * 点「重试」重新拉取时，GirigiriSource 的 WebView 抓取会自动带上该 Cookie，
- * 从而绕过验证、返回真实结果。
- *
- * 仅在当前数据源为 Girigiri 且已输入关键词时生效（见调用处）。
- */
-@Composable
-private fun GirigiriVerifyFallback(query: String, onRetry: () -> Unit) {
-    val url = "${SourceHolder.currentSource.baseUrl}/search/${Uri.encode(query)}----------1---/"
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = "Girigiri 搜索需要网页验证，请在下方页面完成验证后点「重试」",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-        AndroidView(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    webViewClient = WebViewClient()
-                    loadUrl(url)
-                }
-            },
-        )
-        Button(
-            onClick = onRetry,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-        ) {
-            Text("重试")
-        }
     }
 }

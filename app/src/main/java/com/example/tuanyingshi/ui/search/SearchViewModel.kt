@@ -136,7 +136,7 @@ class SearchViewModel @Inject constructor(
     /** 当前搜索涉及的源名清单（用于「正在搜索」提示）。聚合源=各 CSS 规则名。 */
     private fun expectedSourceNames(mode: SourceMode): List<String> {
         return if (mode == SourceMode.Rule && SourceHolder.currentSourceId == SourceHolder.EXTERNAL_CSS_SOURCE_ID) {
-            SourceRuleRepository.getAll()
+            SourceRuleRepository.getVisible()
                 .filter { RuleExecutor.supportsCurrentPlayer(it) }
                 .map { it.name.ifBlank { it.search.baseUrl } }
         } else {

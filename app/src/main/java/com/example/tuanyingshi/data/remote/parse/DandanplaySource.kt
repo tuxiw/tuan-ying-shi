@@ -100,7 +100,7 @@ object DandanplaySource : AnimeSource {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,
@@ -109,7 +109,7 @@ object DandanplaySource : AnimeSource {
     ): FilterPage<AnimeBean> {
         // 弹弹play 高级搜索（search/adv）字段较多，这里用 tag / 年份拼一个关键词走 search/anime 兜底。
         // region/type/status 为后端筛选维度，弹弹play 源不支持，忽略。
-        val query = tag?.takeIf { it.isNotBlank() } ?: year?.toString() ?: ""
+        val query = tag?.takeIf { it.isNotBlank() } ?: year?.takeIf { it.isNotBlank() } ?: ""
         if (query.isBlank()) {
             "getFilterData: query 为空，跳过".log(TAG)
             return FilterPage(emptyList())
@@ -194,7 +194,7 @@ object DandanplaySource : AnimeSource {
      */
     private suspend fun resolveVideoFromCss(animeTitle: String, episodeTitle: String): VideoBean {
         if (animeTitle.isBlank()) return VideoBean(videoUrl = "", headers = emptyMap())
-        val rules = SourceRuleRepository.getAll().filter { RuleExecutor.supportsCurrentPlayer(it) }
+        val rules = SourceRuleRepository.getVisible().filter { RuleExecutor.supportsCurrentPlayer(it) }
         if (rules.isEmpty()) return VideoBean(videoUrl = "", headers = emptyMap())
 
         val candidates = rules.flatMap { rule ->

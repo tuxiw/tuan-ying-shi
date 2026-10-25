@@ -3,6 +3,8 @@ package com.example.tuanyingshi.data.remote.parse
 import com.example.tuanyingshi.data.remote.FilterPage
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniApiService
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniAuthManager
+import com.example.tuanyingshi.data.remote.api.cycani.CycaniResponse
+import com.example.tuanyingshi.data.remote.api.cycani.CycaniSessionExpiredException
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniVideoDto
 import com.example.tuanyingshi.data.remote.dto.AnimeBean
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
@@ -30,6 +32,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
@@ -98,6 +101,39 @@ object CycanimeSource : AnimeSource {
     }
 
     /**
+     * 统一发起 cycani API 请求，并把「登录态失效」从普通业务错误中识别出来。
+     *
+     * 判定来源（两者命中其一即可）：
+     * 1. Retrofit 抛出的 HttpException 且状态码为 401/403；
+     * 2. HTTP 200 但包体 [CycaniResponse.code] / `msg` 命中登录类错误（见 [CycaniResponse.isAuthError]）。
+     *
+     * 命中后通过 [CycaniAuthManager.markSessionExpired] 清除无效 token 并广播失效信号，
+     * 再抛出 [CycaniSessionExpiredException]，由播放器 / 详情页引导用户重新登录，
+     * 而不是让用户对着「解析失败」一头雾水。
+     */
+    private suspend fun <T> callApi(
+        block: suspend CycaniApiService.() -> CycaniResponse<T>,
+    ): CycaniResponse<T> {
+        val response = try {
+            apiService.block()
+        } catch (e: HttpException) {
+            if (e.code() == 401 || e.code() == 403) {
+                Log.w(TAG, "cycani HTTP ${e.code()} → session expired")
+                CycaniAuthManager.markSessionExpired("HTTP ${e.code()}")
+            }
+            throw e
+        }
+        if (!response.isSuccess() && response.isAuthError()) {
+            Log.w(TAG, "cycani auth error: code=${response.code} msg=${response.msg}")
+            CycaniAuthManager.markSessionExpired("code=${response.code} msg=${response.msg}")
+            if (CycaniAuthManager.sessionExpired.value) {
+                throw CycaniSessionExpiredException(response.msg.ifBlank { "次元城登录已失效，请重新登录" })
+            }
+        }
+        return response
+    }
+
+    /**
      * 抓取页面 HTML：优先用 WebView 渲染（绕过次元城 WAF 的 JS 挑战 / React 水合），
      * WebView 失败（超时、无 WebView 环境）再退回纯 OkHttp。
      */
@@ -135,7 +171,7 @@ object CycanimeSource : AnimeSource {
      * 首页轮播图：/api/app/adverts?position=banner。
      */
     private suspend fun fetchBanners(): List<HomeBannerBean> {
-        val response = apiService.getBannerAdverts()
+        val response = callApi { getBannerAdverts() }
         if (!response.isSuccess()) {
             throw IllegalStateException("cycani banner error: ${response.msg} (code=${response.code})")
         }
@@ -156,7 +192,7 @@ object CycanimeSource : AnimeSource {
      * 如果某个视频缺少标题/封面，会通过 /api/videos/{id} 补充后重试。
      */
     private suspend fun buildRecommendHomeSections(): List<HomeBean> {
-        val response = apiService.getRecommend()
+        val response = callApi { getRecommend() }
         if (!response.isSuccess()) {
             throw IllegalStateException("cycani recommend error: ${response.msg} (code=${response.code})")
         }
@@ -175,7 +211,7 @@ object CycanimeSource : AnimeSource {
     private suspend fun mapRecommendVideoToAnimeBean(dto: com.example.tuanyingshi.data.remote.api.cycani.CycaniVideoDto): AnimeBean? {
         val hasInfo = dto.title.isNotBlank() && !dto.coverUrl.isNullOrBlank()
         val enriched = if (!hasInfo && dto.videoId > 0) {
-            runCatching { apiService.getVideoInfo(dto.videoId).data }
+            runCatching { callApi { getVideoInfo(dto.videoId) }.data }
                 .onFailure { it.log(TAG, "enrich video info failed for ${dto.videoId}") }
                 .getOrNull()
         } else {
@@ -231,7 +267,7 @@ object CycanimeSource : AnimeSource {
      * 其余（分类标签未知）兜底归入动画热播，并在调试模式打印未命中分类以便核对。
      */
     private suspend fun buildRankHomeSections(): List<HomeBean> {
-        val response = apiService.getRankVideos(ZONE_ID_TV)
+        val response = callApi { getRankVideos(ZONE_ID_TV) }
         if (!response.isSuccess()) {
             throw IllegalStateException("cycani rank error: ${response.msg} (code=${response.code})")
         }
@@ -298,14 +334,14 @@ object CycanimeSource : AnimeSource {
      * 选集 URL 用 "section/{sectionId}" 形式，后续 [getVideoData] 可直接调播放地址接口。
      */
     private suspend fun getAnimeDetailFromApi(videoId: Long): AnimeDetailBean {
-        val infoResponse = apiService.getVideoInfo(videoId)
+        val infoResponse = callApi { getVideoInfo(videoId) }
         if (!infoResponse.isSuccess()) {
             throw IllegalStateException("cycani video info error: ${infoResponse.msg} (code=${infoResponse.code})")
         }
         val info = infoResponse.data ?: throw IllegalStateException("cycani video info empty")
 
         val playerCode = info.playFrom?.firstOrNull()?.code ?: "cychub"
-        val sectionsResponse = apiService.getVideoSections(videoId, playerCode)
+        val sectionsResponse = callApi { getVideoSections(videoId, playerCode) }
         if (!sectionsResponse.isSuccess()) {
             throw IllegalStateException("cycani sections error: ${sectionsResponse.msg} (code=${sectionsResponse.code})")
         }
@@ -387,8 +423,15 @@ object CycanimeSource : AnimeSource {
     override suspend fun getVideoData(episodeUrl: String): VideoBean {
         val sectionId = episodeUrl.removePrefix("section/").toLongOrNull()
         return if (sectionId != null) {
+            // 本地先看 token 是否已过期：过期就不必再发一次必然失败的请求，直接让用户重新登录。
+            // 只有本地能解析出过期时间时才这样判定，否则仍交给服务端返回判定。
+            if (CycaniAuthManager.isTokenExpired) {
+                Log.w(TAG, "cycani token expired locally → require re-login")
+                CycaniAuthManager.markSessionExpired("token expired locally")
+                throw CycaniSessionExpiredException()
+            }
             // 优先走接口：/api/v2/sections/{sectionId}/play-url
-            val response = apiService.getPlayUrl(sectionId)
+            val response = callApi { getPlayUrl(sectionId) }
             if (!response.isSuccess()) {
                 throw IllegalStateException("cycani play-url error: ${response.msg} (code=${response.code})")
             }
@@ -420,7 +463,7 @@ object CycanimeSource : AnimeSource {
     override suspend fun getSearchData(query: String, page: Int): List<AnimeBean> {
         // 优先走搜索 API（/api/videos/search），失败降级到 HTML 抓取。
         val apiResult = runCatching {
-            val response = apiService.searchVideos(query, page)
+            val response = callApi { searchVideos(query, page) }
             if (response.isSuccess()) {
                 response.data?.list.orEmpty().mapNotNull { mapVideoDtoToAnimeBean(it) }
             } else emptyList()
@@ -436,7 +479,7 @@ object CycanimeSource : AnimeSource {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,
@@ -446,13 +489,15 @@ object CycanimeSource : AnimeSource {
         // 优先走筛选 API（/api/videos），失败降级到空集合，由 UI 提示。
         // region/type/status 为后端筛选维度，次元城接口暂不支持，忽略即可。
         val items = runCatching {
-            val response = apiService.filterVideos(
-                zoneId = zoneId,
-                tag = tag,
-                year = year,
-                orderBy = orderBy,
-                page = page,
-            )
+            val response = callApi {
+                filterVideos(
+                    zoneId = zoneId,
+                    tag = tag,
+                    year = year?.toIntOrNull(),
+                    orderBy = orderBy,
+                    page = page,
+                )
+            }
             if (response.isSuccess()) {
                 response.data?.list.orEmpty().mapNotNull { mapVideoDtoToAnimeBean(it) }
             } else emptyList()
@@ -483,7 +528,7 @@ object CycanimeSource : AnimeSource {
      */
     private suspend fun fetchWeekDataFromApi(): Map<Int, List<AnimeBean>> = coroutineScope {
         val responses = (1..7).map { day ->
-            async { runCatching { apiService.getWeekday(day) }.getOrNull() }
+            async { runCatching { callApi { getWeekday(day) } }.getOrNull() }
         }.awaitAll()
 
         val weekMap = mutableMapOf<Int, MutableList<AnimeBean>>()
@@ -523,7 +568,7 @@ object CycanimeSource : AnimeSource {
             // TV番组：分区 1，使用公开筛选接口（/api/videos?zone_id=1，免登录、按 zone 过滤一次即可）
             // 比需登录的 /api/ranks/{zoneId}/videos 更稳，未登录也能拿到数据。
             runCatching {
-                val tvResp = apiService.filterVideos(ZONE_ID_TV)
+                val tvResp = callApi { filterVideos(ZONE_ID_TV) }
                 if (tvResp.isSuccess()) {
                     tvResp.data?.list?.forEach { dto -> tv.add(toRankBean(dto)) }
                 }
@@ -531,7 +576,7 @@ object CycanimeSource : AnimeSource {
 
             // 剧场番组：分区 2，同样走公开筛选接口（/api/videos?zone_id=2）
             runCatching {
-                val movieResp = apiService.filterVideos(ZONE_ID_MOVIE)
+                val movieResp = callApi { filterVideos(ZONE_ID_MOVIE) }
                 if (movieResp.isSuccess()) {
                     movieResp.data?.list?.forEach { dto -> movie.add(toRankBean(dto)) }
                 }
@@ -562,7 +607,7 @@ object CycanimeSource : AnimeSource {
         tv: MutableList<AnimeBean>,
         movie: MutableList<AnimeBean>,
     ) {
-        val resp = apiService.getRecommend()
+        val resp = callApi { getRecommend() }
         if (!resp.isSuccess()) return
         resp.data?.list.orEmpty().forEach { group ->
             val beans = group.videos.mapNotNull { dto -> recommendDtoToBean(dto) }

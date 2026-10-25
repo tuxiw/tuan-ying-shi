@@ -29,11 +29,12 @@ interface AnimeApi {
 
     /**
      * 分类筛选列表（分类浏览页用）。zoneId/tag/year/orderBy/region/type/status 含义见 AnimeSource.getFilterData。
+     * year 为字符串：兼容 Girigiri 的"2000至90年代"等非数字年份。
      */
     suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,

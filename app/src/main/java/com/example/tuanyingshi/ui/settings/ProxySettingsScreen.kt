@@ -56,7 +56,9 @@ import android.widget.Toast
 /**
  * 网络代理设置页（独立页面，手机端使用）。
  * 支持三种模式：不使用 / 系统代理 / 自定义；
- * 自定义模式下支持 HTTP 与 SOCKS5 两种协议，并可开启账号密码鉴权。
+ * 自定义模式下支持 HTTP 与 SOCKS5 两种协议（单选，同一时刻只有一个生效），并可开启账号密码鉴权。
+ * 模式切换即时生效并按 ProxyHolder 的状态机收敛：NONE 清空全部代理配置、SYSTEM 清空自定义代理、
+ * CUSTOM 只保留当前选中的单一协议；页面内的自定义字段保留在 UI state，切回 CUSTOM 原样恢复。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -146,6 +148,21 @@ fun ProxySettingsContent(
         }
     }
 
+    // 模式切换即时生效：按目标模式收敛代理状态（NONE 全清 / SYSTEM 清自定义 / CUSTOM 按当前填写值）。
+    // 页面内的自定义字段保留在 UI state 里，切回 CUSTOM 时原样恢复，无需重新填写。
+    fun onModeSelect(newMode: ProxyMode) {
+        if (newMode == mode) return
+        mode = newMode
+        ProxyHolder.save(
+            mode = newMode,
+            type = type,
+            host = host,
+            port = portStr.toIntOrNull() ?: 0,
+            username = if (useAuth) username else "",
+            password = if (useAuth) password else "",
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -156,24 +173,24 @@ fun ProxySettingsContent(
     ) {
         SectionTitle("代理模式")
 
-        // 模式单选卡片
+        // 模式单选卡片（切换即生效，详见 onModeSelect）
         ProxyModeCard(
             selected = mode == ProxyMode.NONE,
             title = "不使用代理",
-            desc = "直接连接，不走任何代理",
-            onClick = { mode = ProxyMode.NONE },
+            desc = "直接连接，不走任何代理；切换后清空全部代理配置",
+            onClick = { onModeSelect(ProxyMode.NONE) },
         )
         ProxyModeCard(
             selected = mode == ProxyMode.SYSTEM,
             title = "系统代理",
-            desc = "使用 Android 系统当前设置的代理",
-            onClick = { mode = ProxyMode.SYSTEM },
+            desc = "使用 Android 系统当前设置的代理；切换后清空自定义代理",
+            onClick = { onModeSelect(ProxyMode.SYSTEM) },
         )
         ProxyModeCard(
             selected = mode == ProxyMode.CUSTOM,
             title = "自定义代理",
-            desc = "使用自定义的 HTTP / SOCKS5 代理服务器",
-            onClick = { mode = ProxyMode.CUSTOM },
+            desc = "使用自定义的 HTTP / SOCKS5 代理服务器（单一协议生效）",
+            onClick = { onModeSelect(ProxyMode.CUSTOM) },
         )
 
         if (mode == ProxyMode.CUSTOM) {

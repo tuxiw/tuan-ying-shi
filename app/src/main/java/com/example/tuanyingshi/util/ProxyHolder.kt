@@ -1,6 +1,5 @@
 package com.example.tuanyingshi.util
 
-import android.os.Build
 import com.example.tuanyingshi.TuanyingApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
@@ -20,9 +19,9 @@ import java.util.concurrent.Executor
 
 /**
  * 网络代理模式。
- * - NONE：不使用代理（直连）
- * - SYSTEM：使用系统代理（OkHttp 走默认 ProxySelector；WebView 清除覆盖，恢复系统默认）
- * - CUSTOM：使用用户配置的代理（HTTP 或 SOCKS5，可按需鉴权）
+ * - NONE：不使用代理（直连）——清空全部代理状态，任何协议/地址/凭据都不保留；
+ * - SYSTEM：使用系统代理——只保留系统代理，清空自定义代理配置；
+ * - CUSTOM：使用用户配置的代理（HTTP 或 SOCKS5，可按需鉴权）——同一时刻只有一个协议类型生效。
  */
 enum class ProxyMode {
     NONE,
@@ -31,7 +30,7 @@ enum class ProxyMode {
 }
 
 /**
- * 自定义代理协议类型。
+ * 自定义代理协议类型（单选，HTTP 与 SOCKS 互斥）。
  * - HTTP：标准 HTTP 代理（CONNECT 隧道）
  * - SOCKS：SOCKS5 代理
  */
@@ -41,14 +40,20 @@ enum class ProxyType {
 }
 
 /**
- * 全局代理配置中心。
+ * 全局代理配置中心（代理状态的单一事实来源）。
  * 持有当前代理模式、协议类型、自定义地址、端口与鉴权信息，并在变更时：
  *  1. 同步给下载模块（m3u8 下载走 OkHttp）；
- *  2. 同步给系统 WebView（解析页走 WebView，API 28+ 用 ProxyController）；
+ *  2. 同步给系统 WebView（解析/过盾页走 WebView，用 androidx.webkit.ProxyController 正式 API）；
  *  3. 通过 [applyProxy] 把代理与鉴权注入各 OkHttp 客户端。
  *
- * 注：WebView 的 ProxyConfig 仅支持 HTTP 代理规则，因此 SOCKS 类型在 WebView 解析页
- * 会退化为系统默认（OkHttp 侧仍按 SOCKS5 生效）。
+ * 模式状态机（[save] 时收敛，任何模式下都不会残留其它模式的代理状态）：
+ * - NONE：清空全部代理状态（协议/地址/端口/凭据，内存 + 持久化）；
+ * - SYSTEM：只保留系统代理，清空自定义代理配置；
+ * - CUSTOM：只保留当前选中的单一协议类型及其地址/凭据（HTTP 与 SOCKS5 二选一，
+ *   OkHttp 代理对象、WebView 覆盖、持久化三处都只会有这一个协议）。
+ *
+ * 注：WebView 的 ProxyConfig 仅支持 HTTP 代理规则，因此 SOCKS 类型在 WebView 侧不生效
+ * （OkHttp 侧仍按 SOCKS5 生效；WebView 由过盾器的桥接兜底，见 [webViewProxyApplied]）。
  */
 object ProxyHolder {
 
@@ -94,6 +99,28 @@ object ProxyHolder {
         port = prefs.getInt(KEY_PROXY_PORT, 0)
         username = prefs.getString(KEY_PROXY_USER, "") ?: ""
         password = prefs.getString(KEY_PROXY_PASS, "") ?: ""
+        // 旧版本可能残留：非 CUSTOM 模式下不允许携带任何自定义代理状态，顺手清掉持久化残留
+        if (mode != ProxyMode.CUSTOM) {
+            type = ProxyType.HTTP
+            host = ""
+            port = 0
+            username = ""
+            password = ""
+            persist()
+        }
+    }
+
+    /** 把当前内存态写入持久化（供 [load] 的残留清理与 [save] 复用）。 */
+    private fun persist() {
+        TuanyingApp.getInstance().preferences.edit().apply {
+            putString(KEY_PROXY_MODE, mode.name)
+            putString(KEY_PROXY_TYPE, type.name)
+            putString(KEY_PROXY_HOST, host)
+            putInt(KEY_PROXY_PORT, port)
+            putString(KEY_PROXY_USER, username)
+            putString(KEY_PROXY_PASS, password)
+            apply()
+        }
     }
 
     /**
@@ -104,6 +131,13 @@ object ProxyHolder {
         // 调用任意成员即可触发 object 初始化；init 已包含 load / syncToDownloadModule / applyWebViewProxy。
     }
 
+    /**
+     * 保存并应用代理配置，并按目标模式收敛代理状态（内存 + 持久化 + 各网络模块三处一致）：
+     * - [ProxyMode.NONE]：清空全部代理状态——协议回退默认、地址/端口/凭据全部抹掉；
+     * - [ProxyMode.SYSTEM]：只保留系统代理——清空自定义代理配置（协议/地址/端口/凭据）；
+     * - [ProxyMode.CUSTOM]：只保留传入的单一协议类型及其地址/凭据（HTTP 与 SOCKS5 互斥，
+     *   不会同时有两种协议在代理）。
+     */
     fun save(
         mode: ProxyMode,
         type: ProxyType,
@@ -112,21 +146,27 @@ object ProxyHolder {
         username: String,
         password: String,
     ) {
-        this.mode = mode
-        this.type = type
-        this.host = host.trim()
-        this.port = port
-        this.username = username.trim()
-        this.password = password
-        TuanyingApp.getInstance().preferences.edit().apply {
-            putString(KEY_PROXY_MODE, mode.name)
-            putString(KEY_PROXY_TYPE, type.name)
-            putString(KEY_PROXY_HOST, this@ProxyHolder.host)
-            putInt(KEY_PROXY_PORT, port)
-            putString(KEY_PROXY_USER, this@ProxyHolder.username)
-            putString(KEY_PROXY_PASS, this@ProxyHolder.password)
-            apply()
+        when (mode) {
+            ProxyMode.NONE, ProxyMode.SYSTEM -> {
+                // 不使用代理 = 全部清空；系统代理 = 只留系统。两者都不保留任何自定义代理状态。
+                this.mode = mode
+                this.type = ProxyType.HTTP
+                this.host = ""
+                this.port = 0
+                this.username = ""
+                this.password = ""
+            }
+            ProxyMode.CUSTOM -> {
+                // 自定义代理：单一协议类型（当前选中的 HTTP 或 SOCKS5）+ 其地址与凭据
+                this.mode = ProxyMode.CUSTOM
+                this.type = type
+                this.host = host.trim()
+                this.port = port
+                this.username = username.trim()
+                this.password = password
+            }
         }
+        persist()
         syncProxyToModules()
         applyWebViewProxy()
     }
@@ -185,57 +225,62 @@ object ProxyHolder {
     }
 
     /**
-     * 同步到系统 WebView（API 28+）。
-     * 注意：android.webkit.ProxyController / ProxyConfig 属于系统 API，
-     * 不在公开 SDK 的 android.jar 中（已实测 android-35 jar 中不存在），
-     * 只能通过反射调用；反射失败（受限名单 / 厂商 ROM 差异）时
-     * 静默降级为 WebView 默认行为（跟随系统代理）。
-     * 另：ProxyConfig 仅支持 HTTP 代理规则，SOCKS 类型在此处退化为清除覆盖。
+     * WebView 原生代理是否已生效（CUSTOM + HTTP + PROXY_OVERRIDE 特性可用 + 应用成功）。
+     * 过盾器据此决定是否需要 shouldInterceptRequest→OkHttp 桥接兜底。
+     */
+    var webViewProxyApplied: Boolean = false
+        private set
+
+    /**
+     * 同步到系统 WebView。
+     *
+     * 用 **androidx.webkit.ProxyController**（正式 API）：它经 WebView provider 的 glue 层生效，
+     * 不依赖框架隐藏类 `android.webkit.ProxyController`（后者反射在 MIUI 等 ROM 上被受限 API
+     * 拦截，实测 `Class.forName` 即失败，导致 WebView 从未吃到 App 内代理 → 过盾白屏超时）。
+     *
+     * - 不支持 PROXY_OVERRIDE 特性的老 WebView，或 SOCKS 代理（ProxyConfig 仅支持 HTTP 规则）：
+     *   清除覆盖并置 [webViewProxyApplied]=false，由过盾器的 OkHttp 桥接兜底
+     *   （桥接无法转发 POST body，CF 挑战可能完不成，属最后手段，会在日志留痕）。
+     * - NONE / SYSTEM：清除覆盖，WebView 跟随系统网络栈（SYSTEM 模式即系统代理）。
      */
     private fun applyWebViewProxy() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        webViewProxyApplied = false
         runCatching {
-            val controllerClass = Class.forName("android.webkit.ProxyController")
-            val configClass = Class.forName("android.webkit.ProxyConfig")
-            val builderClass = Class.forName("android.webkit.ProxyConfig\$Builder")
-            val controller = controllerClass.getMethod("getInstance").invoke(null)
             val executor: Executor = Dispatchers.IO.asExecutor()
+            val controller = androidx.webkit.ProxyController.getInstance()
+            if (!androidx.webkit.WebViewFeature.isFeatureSupported(
+                    androidx.webkit.WebViewFeature.PROXY_OVERRIDE,
+                )
+            ) {
+                android.util.Log.w(
+                    "ProxyHolder",
+                    "WebView 不支持 PROXY_OVERRIDE，WebView 将跟随系统网络栈（过盾将走桥接兜底）",
+                )
+                return@runCatching
+            }
             when (mode) {
                 ProxyMode.CUSTOM -> {
                     if (type == ProxyType.HTTP && host.isNotBlank() && port in 1..65535) {
-                        val builder = builderClass.getDeclaredConstructor().newInstance()
-                        builderClass.getMethod("addProxyRule", String::class.java)
-                            .invoke(builder, "PROXY $host:$port")
-                        val config = builderClass.getMethod("build").invoke(builder)
-                        controllerClass
-                            .getMethod(
-                                "setProxyOverride",
-                                configClass,
-                                Executor::class.java,
-                                Runnable::class.java,
-                            )
-                            .invoke(controller, config, executor, Runnable { })
+                        val config = androidx.webkit.ProxyConfig.Builder()
+                            .addProxyRule("$host:$port")
+                            .build()
+                        controller.setProxyOverride(config, executor, Runnable { })
+                        webViewProxyApplied = true
                     } else {
-                        // SOCKS 或非法的 HTTP：清除覆盖，交由系统默认
-                        controllerClass
-                            .getMethod(
-                                "clearProxyOverride",
-                                Executor::class.java,
-                                Runnable::class.java,
-                            )
-                            .invoke(controller, executor, Runnable { })
+                        // SOCKS 或非法的 HTTP：WebView 无法按 SOCKS 代理，清除覆盖走系统/桥接
+                        controller.clearProxyOverride(executor, Runnable { })
+                        android.util.Log.w(
+                            "ProxyHolder",
+                            "CUSTOM 代理为 SOCKS/非法配置，WebView 无法原生代理（过盾将走桥接兜底）",
+                        )
                     }
                 }
                 else -> {
-                    controllerClass
-                        .getMethod(
-                            "clearProxyOverride",
-                            Executor::class.java,
-                            Runnable::class.java,
-                        )
-                        .invoke(controller, executor, Runnable { })
+                    controller.clearProxyOverride(executor, Runnable { })
                 }
             }
+        }.onFailure {
+            android.util.Log.w("ProxyHolder", "applyWebViewProxy(androidx) 失败: ${it.message}")
         }
     }
 

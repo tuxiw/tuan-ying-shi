@@ -12,4 +12,5 @@ interface FavoriteRepository {
     suspend fun toggle(anime: Anime, mode: SourceMode)
     suspend fun add(anime: Anime, mode: SourceMode)
     suspend fun remove(detailUrl: String)
+    suspend fun clearAll()
 }

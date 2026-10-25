@@ -80,6 +80,38 @@ private fun buildScheme(dark: Boolean, accent: Color?): ColorScheme {
     )
 }
 
+/** AMOLED 纯黑：把深色方案的背景 / 容器槽位压成纯黑系，省电并提升对比度。 */
+private fun ColorScheme.toAmoled(): ColorScheme = copy(
+    background = Color.Black,
+    onBackground = onBackground,
+    surface = Color.Black,
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF0A0A0A),
+    surfaceContainer = Color(0xFF0F0F0F),
+    surfaceContainerHigh = Color(0xFF161616),
+    surfaceContainerHighest = Color(0xFF1E1E1E),
+    inverseSurface = Color(0xFF121212),
+)
+
+/** 依据配置生成最终配色：动态色彩（API 31+）优先，其次强调色，最后 AMOLED 覆盖。 */
+@Composable
+internal fun resolveScheme(
+    darkTheme: Boolean,
+    config: com.example.tuanyingshi.util.ThemeConfig,
+): ColorScheme {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val accent = parseColorHex(config.accentHex) ?: TuanyingPink
+    val useDynamic = config.dynamicColor && android.os.Build.VERSION.SDK_INT >= 31
+    val scheme = if (useDynamic) {
+        if (darkTheme) androidx.compose.material3.dynamicDarkColorScheme(context)
+        else androidx.compose.material3.dynamicLightColorScheme(context)
+    } else {
+        remember(darkTheme, accent) { buildScheme(darkTheme, accent) }
+    }
+    // AMOLED 纯黑仅作用于深色模式；动态色下也生效（保持省电初衷）
+    return if (darkTheme && config.amoled) scheme.toAmoled() else scheme
+}
+
 @Composable
 fun TuanyingshiTheme(
     content: @Composable () -> Unit,
@@ -91,8 +123,7 @@ fun TuanyingshiTheme(
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
     }
-    val accent = parseColorHex(config.accentHex) ?: TuanyingPink
-    val colorScheme = remember(darkTheme, accent) { buildScheme(darkTheme, accent) }
+    val colorScheme = resolveScheme(darkTheme, config)
 
     // 跟随主题切换状态栏 / 导航栏图标的明暗，避免亮色背景下图标不可见
     val view = LocalView.current
@@ -107,6 +138,36 @@ fun TuanyingshiTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = Typography,
+        content = content,
+    )
+}
+
+/**
+ * 播放页主题包装：开启「播放页始终使用深色主题」后，包内内容强制深色配色
+ * （跟随强调色与 AMOLED 设置）；关闭时原样透传。用于播放页在浅色模式下仍保持沉浸。
+ */
+@Composable
+fun PlayerTheme(
+    content: @Composable () -> Unit,
+) {
+    val config by ThemePrefs.config.collectAsStateWithLifecycle()
+    if (!config.playerForceDark) {
+        content()
+        return
+    }
+    // 强制深色时状态栏/导航栏图标应保持浅色，避免浅色系统下进播放页图标不可见
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.context as? Activity)?.window
+        window?.let {
+            val controller = WindowCompat.getInsetsController(it, view)
+            controller.isAppearanceLightStatusBars = false
+            controller.isAppearanceLightNavigationBars = false
+        }
+    }
+    MaterialTheme(
+        colorScheme = resolveScheme(darkTheme = true, config = config),
         typography = Typography,
         content = content,
     )

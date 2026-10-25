@@ -20,13 +20,20 @@ class HistoryRepositoryImpl @Inject constructor(private val dao: HistoryDao) : H
 
     override fun observeExists(detailUrl: String): Flow<Boolean> = dao.observeExists(detailUrl)
 
-    override suspend fun record(anime: Anime, episode: Episode, position: Long, mode: SourceMode) {
+    override suspend fun record(
+        anime: Anime,
+        episode: Episode,
+        position: Long,
+        mode: SourceMode,
+        sourceName: String,
+    ) {
         // 本地写入（position 为毫秒，本地库原样保存）。
         val historyId = dao.upsert(HistoryEntity(
             title = anime.title,
             imgUrl = anime.img,
             detailUrl = anime.detailUrl,
             source = mode.name,
+            sourceName = sourceName,
             lastEpisodeName = episode.name,
             lastEpisodeUrl = episode.url,
         ))
@@ -40,7 +47,7 @@ class HistoryRepositoryImpl @Inject constructor(private val dao: HistoryDao) : H
         syncHistory(anime, episode.name, episode.url, (position / 1000).toInt(), mode)
     }
 
-    override suspend fun recordBrowse(anime: Anime, mode: SourceMode) {
+    override suspend fun recordBrowse(anime: Anime, mode: SourceMode, sourceName: String) {
         if (dao.observeExists(anime.detailUrl).first()) return
         dao.upsert(
             HistoryEntity(
@@ -48,6 +55,7 @@ class HistoryRepositoryImpl @Inject constructor(private val dao: HistoryDao) : H
                 imgUrl = anime.img,
                 detailUrl = anime.detailUrl,
                 source = mode.name,
+                sourceName = sourceName,
             )
         )
         // 后端模式：同步一条浏览记录（无进度，仅标记看过）。

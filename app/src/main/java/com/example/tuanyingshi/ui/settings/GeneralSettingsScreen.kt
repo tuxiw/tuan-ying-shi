@@ -50,8 +50,10 @@ import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.ui.player.formatFileSize
 import com.example.tuanyingshi.util.ContentPrefs
 import com.example.tuanyingshi.util.DebugPrefs
+import com.example.tuanyingshi.util.SettingsNavPrefs
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Restore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -113,16 +115,19 @@ fun GeneralSettingsContent(
     val hideHomeBanner by ContentPrefs.hideHomeBanner.collectAsStateWithLifecycle()
     val filterResetOnExit by ContentPrefs.filterResetOnExit.collectAsStateWithLifecycle()
     val exitConfirm by ContentPrefs.exitConfirm.collectAsStateWithLifecycle()
+    // 设置页返回策略：默认关闭（保持位置）；开启后从二级页返回设置页时回到「通用」
+    val settingsResetToDefaultOnReturn by SettingsNavPrefs.resetToDefaultOnReturn.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         cacheSizeText = withContext(Dispatchers.IO) { formatFileSize(dirSize(context.cacheDir)) }
     }
 
-    // NSFW 内容屏蔽：默认开启，隐藏含成人 / 肉番 / NSFW / R18 标签的番剧
+    // NSFW 内容屏蔽：默认开启，隐藏含成人 / 肉番 / NSFW / R18 标签的番剧，
+    // 同时把 NSFW 数据源（如 Hanime1）从数据源列表与搜索/播放链路中整体剔除
     SwitchRow(
         icon = Icons.Filled.Block,
         title = "NSFW 内容屏蔽",
-        desc = "隐藏含成人 / 肉番 / NSFW / R18 标签的番剧",
+        desc = "隐藏含成人 / 肉番 / NSFW / R18 标签的番剧；同时隐藏 NSFW 数据源",
         checked = nsfwBlock,
         onCheckedChange = { ContentPrefs.setNsfwBlock(it) },
     )
@@ -157,6 +162,15 @@ fun GeneralSettingsContent(
         desc = "连按两次返回键才退出应用",
         checked = exitConfirm,
         onCheckedChange = { ContentPrefs.setExitConfirm(it) },
+    )
+    // 设置页返回策略：默认关闭——从二级页面（数据源管理 / 规则编辑器等）返回后
+    // 保持之前选中的设置分区；开启后每次都回到默认「通用」分区
+    SwitchRow(
+        icon = Icons.Filled.Restore,
+        title = "返回后重置为默认选项",
+        desc = "开启后，从二级页面返回设置页时回到「通用」；关闭则保持之前选择的位置",
+        checked = settingsResetToDefaultOnReturn,
+        onCheckedChange = { SettingsNavPrefs.setResetToDefaultOnReturn(it) },
     )
     DividerItem()
 

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -228,6 +229,16 @@ fun HomeQuickDrawerContent(
                 DrawerEntryRow(Icons.Filled.FavoriteBorder, "我的收藏") {
                     onClose()
                     navController.navigate(Screen.Favorites.route)
+                }
+            } else {
+                // 非后端（本地数据源）：收藏 / 评分存本机，走本地列表页
+                DrawerEntryRow(Icons.Filled.FavoriteBorder, "我的收藏") {
+                    onClose()
+                    navController.navigate(Screen.LocalFavorites.route)
+                }
+                DrawerEntryRow(Icons.Filled.Star, "我的评分") {
+                    onClose()
+                    navController.navigate(Screen.LocalRatings.route)
                 }
             }
             DrawerEntryRow(Icons.Filled.History, "观看历史") {

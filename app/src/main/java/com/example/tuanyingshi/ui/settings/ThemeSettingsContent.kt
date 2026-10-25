@@ -4,10 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,9 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -26,8 +26,11 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -52,23 +55,32 @@ import com.example.tuanyingshi.util.ThemePrefs
 
 /** 预置强调色（兼顾暗/亮背景可读性）。第一个为默认品牌色。 */
 private val PRESET_ACCENTS = listOf(
-    "#FFFF4D6D", // 樱粉（默认）
-    "#FF9D7CE0", // 魅紫
-    "#FF42A5F5", // 青蓝
+    "#FF42A5F5", // 天蓝
     "#FF26C6A5", // 湖绿
     "#FF4CAF50", // 翠绿
-    "#FFFF9800", // 橙黄
-    "#FFE53935", // 赤红
-    "#FF5C6BC0", // 靛蓝
-    "#FFE91E63", // 品红
-    "#FFFF7043", // 暖橙
+    "#FF9D7CE0", // 魅紫（默认）
+    "#FFB39DDB", // 浅紫
+    "#FFBA68C8", // 兰紫
+    "#FFF06292", // 樱粉
+    "#FFFF7043", // 珊瑚
+    "#FFFFA726", // 橙黄
+    "#FFD4C04A", // 芥黄
 )
 
-private const val DEFAULT_ACCENT = "#FFFF4D6D"
+private const val DEFAULT_ACCENT = "#FF9D7CE0"
+
+/** 「自动」模式预览卡的对角线裁剪形状：保留左上三角（亮色部分）。 */
+private val DiagonalShape = GenericShape { size, _ ->
+    moveTo(0f, 0f)
+    lineTo(size.width, 0f)
+    lineTo(0f, size.height)
+    close()
+}
 
 /**
- * 主题配色设置内容（可嵌入设置页右侧 / 独立页）。
- * 包含：外观模式（跟随系统 / 暗色 / 亮色）+ 强调色（预置色板 + 自定义 HSV 取色器）。
+ * 「主题与色彩」设置内容（可嵌入设置页右侧 / 独立页）。
+ * 包含：主题模式三卡片预览选择（浅色 / 深色 / 自动）+ 色彩开关组 +
+ * 调色板（预置强调色 + 自定义 HSV 取色器）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -90,41 +102,68 @@ fun ThemeSettingsContent() {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
-        SectionTitle("外观模式")
-        Spacer(Modifier.height(8.dp))
-        ThemeMode.entries.forEach { mode ->
-            val title = when (mode) {
-                ThemeMode.SYSTEM -> "跟随系统"
-                ThemeMode.DARK -> "暗色"
-                ThemeMode.LIGHT -> "亮色"
+        // ───────────────── 主题模式 ─────────────────
+        GroupLabel("主题")
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(8.dp))
+            ThemeMode.entries.forEach { mode ->
+                val label = when (mode) {
+                    ThemeMode.LIGHT -> "浅色"
+                    ThemeMode.DARK -> "深色"
+                    ThemeMode.SYSTEM -> "自动"
+                }
+                ThemeModeCard(
+                    label = label,
+                    selected = config.mode == mode,
+                    mode = mode,
+                    onClick = { ThemePrefs.setMode(mode) },
+                )
+                Spacer(Modifier.width(20.dp))
             }
-            ModeOptionRow(
-                title = title,
-                selected = config.mode == mode,
-                onClick = { ThemePrefs.setMode(mode) },
-            )
         }
 
-        Spacer(Modifier.height(24.dp))
-        SectionTitle("主题配色")
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "选择全应用强调色；恢复默认即可回到内置品牌色。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(20.dp))
 
+        // ───────────────── 色彩开关 ─────────────────
+        ThemeSwitchRow(
+            title = "动态色彩",
+            desc = "使用系统强调色（Android 12+ 生效）",
+            checked = config.dynamicColor,
+            onCheckedChange = { ThemePrefs.setDynamicColor(it) },
+        )
+        ThemeSwitchRow(
+            title = "高对比度深色主题",
+            desc = "深色模式使用纯黑背景，在 AMOLED 屏幕使用纯黑背景可以省电",
+            checked = config.amoled,
+            onCheckedChange = { ThemePrefs.setAmoled(it) },
+        )
+        ThemeSwitchRow(
+            title = "播放页始终使用深色主题",
+            desc = "提供更加沉浸的播放体验",
+            checked = config.playerForceDark,
+            onCheckedChange = { ThemePrefs.setPlayerForceDark(it) },
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        // ───────────────── 调色板 ─────────────────
+        GroupLabel("调色板")
+        Spacer(Modifier.height(12.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             maxItemsInEachRow = 5,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PRESET_ACCENTS.forEach { hex ->
                 val color = parseColorHex(hex) ?: TuanyingPink
                 val selected = currentHex == hex || (currentHex == null && hex == DEFAULT_ACCENT)
-                ColorSwatch(
+                PaletteSwatch(
                     color = color,
                     selected = selected,
                     onClick = {
@@ -133,9 +172,10 @@ fun ThemeSettingsContent() {
                     },
                 )
             }
-            CustomSwatch(
+            PaletteSwatch(
+                color = customColor,
+                isCustom = true,
                 selected = showCustom,
-                current = customColor,
                 onClick = { showCustom = !showCustom },
             )
         }
@@ -180,103 +220,203 @@ fun ThemeSettingsContent() {
     }
 }
 
+/** 分组小标题（强调色小字样式，与参考设计一致）。 */
 @Composable
-private fun SectionTitle(text: String) {
+private fun GroupLabel(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onBackground,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp),
     )
 }
 
+// ───────────────── 主题模式卡片 ─────────────────
+
 @Composable
-private fun ModeOptionRow(
-    title: String,
+private fun ThemeModeCard(
+    label: String,
     selected: Boolean,
+    mode: ThemeMode,
     onClick: () -> Unit,
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .width(84.dp)
+                .height(140.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) accent else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(16.dp),
+                )
+                .clickable { onClick() },
+        ) {
+            if (mode == ThemeMode.SYSTEM) {
+                ModePreview(dark = true, accent = accent)
+                Box(modifier = Modifier.matchParentSize().clip(DiagonalShape)) {
+                    ModePreview(dark = false, accent = accent)
+                }
+            } else {
+                ModePreview(dark = mode == ThemeMode.DARK, accent = accent)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+                colors = RadioButtonDefaults.colors(selectedColor = accent),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
+/** 卡片内的迷你界面预览：顶部色块 + 文本行 + 底部胶囊按钮行。 */
+@Composable
+private fun ModePreview(dark: Boolean, accent: Color, modifier: Modifier = Modifier) {
+    val bg = if (dark) Color(0xFF15151B) else Color(0xFFF4F4F6)
+    val cover = accent.copy(alpha = if (dark) 0.55f else 0.8f)
+    val line = if (dark) Color(0xFF3A3A44) else Color(0xFFD9D9E0)
+    val pill = accent.copy(alpha = if (dark) 0.35f else 0.25f)
+    Box(
+        modifier = modifier
+            .background(bg)
+            .padding(9.dp),
+    ) {
+        Column {
+            // 迷你封面块
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(cover),
+            )
+            Spacer(Modifier.height(8.dp))
+            repeat(3) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(line),
+                )
+                Spacer(Modifier.height(5.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            // 底部：圆形 + 胶囊按钮
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(11.dp)
+                        .clip(CircleShape)
+                        .background(accent),
+                )
+                Spacer(Modifier.width(5.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(11.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(pill),
+                )
+            }
+        }
+    }
+}
+
+// ───────────────── 开关行 ─────────────────
+
+/** 无图标的设置开关行（标题 + 描述 + Switch），与参考设计一致。 */
+@Composable
+private fun ThemeSwitchRow(
+    title: String,
+    desc: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 12.dp, horizontal = 4.dp),
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 14.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-        )
-        if (selected) {
-            Icon(
-                Icons.Filled.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = desc,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
-    Spacer(Modifier.height(2.dp))
 }
 
+// ───────────────── 调色板 ─────────────────
+
+/** 调色板色块：圆角色卡片内嵌圆形色标，选中时圆环 + 对勾。 */
 @Composable
-private fun ColorSwatch(
+private fun PaletteSwatch(
     color: Color,
     selected: Boolean,
     onClick: () -> Unit,
+    isCustom: Boolean = false,
 ) {
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
     Box(
         modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(color)
-            .border(
-                width = if (selected) 3.dp else 0.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(12.dp),
+            .size(56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.surfaceVariant
+                else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)
             )
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) {
-            Icon(
-                Icons.Filled.Check,
-                contentDescription = null,
-                tint = if (color.luminance() > 0.5f) Color.Black else Color.White,
-                modifier = Modifier.size(22.dp),
-            )
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(color)
+                .border(
+                    width = if (selected) 2.dp else 0.dp,
+                    color = if (isCustom && selected) MaterialTheme.colorScheme.primary else color.copy(alpha = 0.6f),
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isCustom) {
+                Icon(
+                    Icons.Filled.Palette,
+                    contentDescription = "自定义颜色",
+                    tint = if (color.luminance() > 0.5f) Color.Black.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(16.dp),
+                )
+            } else if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
-    }
-}
-
-@Composable
-private fun CustomSwatch(
-    selected: Boolean,
-    current: Color,
-    onClick: () -> Unit,
-) {
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(
-                width = if (selected) 3.dp else 1.dp,
-                color = if (selected) borderColor else MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            Icons.Filled.Palette,
-            contentDescription = "自定义颜色",
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(22.dp),
-        )
     }
 }
 

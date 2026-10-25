@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.tuanyingshi.data.local.entity.HistoryEntity
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.data.remote.backend.HistoryItemVO
+import com.example.tuanyingshi.data.remote.parse.Hanime1Source
 import com.example.tuanyingshi.data.repository.HistoryRepository
 import com.example.tuanyingshi.util.BackendPrefs
+import com.example.tuanyingshi.util.ContentPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,13 +37,15 @@ class HistoryViewModel @Inject constructor(
 
     fun load() {
         viewModelScope.launch {
+            // Hanime1 全站成人内容：NSFW 屏蔽开启时，其浏览记录一并隐藏（本地记录带 sourceName）
+            val hideNsfwSource = ContentPrefs.isNsfwBlocked()
             _history.value = if (BackendPrefs.isBackendMode()) {
                 runCatching { BackendClient.api.history(1, 100).data?.records.orEmpty() }
                     .getOrDefault(emptyList())
                     .map { it.toUi() }
             } else {
                 historyRepository.observeHistory().first().map { it.toUi() }
-            }
+            }.filterNot { hideNsfwSource && it.sourceName == Hanime1Source.SOURCE_NAME }
         }
     }
 
@@ -74,6 +78,8 @@ data class HistoryItemUi(
     val imgUrl: String?,
     val episodeName: String?,
     val updatedAt: Long,
+    /** 该条记录使用的数据源名称（本地记录才有；后端历史暂不返回来源）。 */
+    val sourceName: String? = null,
 )
 
 private fun HistoryEntity.toUi() = HistoryItemUi(
@@ -83,6 +89,7 @@ private fun HistoryEntity.toUi() = HistoryItemUi(
     imgUrl = imgUrl,
     episodeName = lastEpisodeName,
     updatedAt = updatedAt,
+    sourceName = sourceName.ifBlank { null },
 )
 
 private fun HistoryItemVO.toUi() = HistoryItemUi(

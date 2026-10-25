@@ -11,6 +11,31 @@ data class CycaniResponse<T>(
     val data: T?,
 ) {
     fun isSuccess(): Boolean = code == 0
+
+    /**
+     * 是否属于「登录态失效 / 需要登录」类错误。
+     *
+     * 源站对失效 token 的返回并不统一（见过 HTTP 401，也见过 200 包体里 code=401 的情况），
+     * 因此这里同时按 **业务码** 与 **错误文案关键词** 双重判定，宁可宽松也不要漏判——
+     * 漏判的代价是用户看到「解析失败」却不知要重新登录。
+     */
+    fun isAuthError(): Boolean {
+        if (code in AUTH_ERROR_CODES) return true
+        val lower = msg.lowercase()
+        return AUTH_ERROR_KEYWORDS.any { lower.contains(it) }
+    }
+
+    private companion object {
+        /** 常见的登录失效业务码：HTTP 语义 401/403 + 站方自定义码。 */
+        val AUTH_ERROR_CODES = setOf(401, 403, 1001, 1002, 1003, 2001, 3001)
+
+        /** 错误文案里的登录关键词（中英文都覆盖）。 */
+        val AUTH_ERROR_KEYWORDS = listOf(
+            "登录", "登陆", "未登录", "请登录", "重新登录", "token",
+            "授权", "鉴权", "身份", "凭证", "credential",
+            "unauthorized", "unauthorised", "forbidden", "expire", "login",
+        )
+    }
 }
 
 /**
@@ -19,6 +44,27 @@ data class CycaniResponse<T>(
 data class CycaniLoginRequest(
     val username: String,
     val password: String,
+)
+
+/**
+ * 邮箱验证码请求体（POST /api/auth/send-code）。
+ *
+ * @param type 业务类型：注册传 "register"。
+ */
+data class CycaniSendCodeRequest(
+    val email: String,
+    val type: String,
+)
+
+/**
+ * 注册请求体（POST /api/v2/auth/register）。
+ */
+data class CycaniRegisterRequest(
+    val username: String,
+    val password: String,
+    val email: String,
+    @SerializedName("email_code")
+    val emailCode: String,
 )
 
 /**
@@ -41,6 +87,27 @@ data class CycaniUser(
     val email: String?,
     @SerializedName("avatar_url")
     val avatarUrl: String?,
+)
+
+/**
+ * 账号资料接口 GET /api/user/me 的 data 节点。
+ *
+ * 返回示例：
+ * ```json
+ * { "id": 1521518, "username": "shenyun758", "nickname": null,
+ *   "email": "758427981@qq.com", "avatar_url": "", "group_name": "普通用户" }
+ * ```
+ * 说明：nickname / avatar_url / group_name 都可能是空串或 null，UI 需自行回退。
+ */
+data class CycaniUserProfile(
+    val id: Long?,
+    val username: String?,
+    val nickname: String?,
+    val email: String?,
+    @SerializedName("avatar_url")
+    val avatarUrl: String?,
+    @SerializedName("group_name")
+    val groupName: String?,
 )
 
 /**

@@ -7,13 +7,15 @@ import java.util.UUID
  * 视频匹配策略。
  * - INTERCEPT：WebView 拦截 / 正则从页面资源中匹配视频直链（通用站点）；
  * - SILISILI_POST：嘶哩嘶哩式「POST 表单 + MD5 + AES 解密」获取 m3u8；
- * - GIRIGIRI_B64：Girigiri 式「脚本内 Base64 编码直链」解码。
+ * - GIRIGIRI_B64：Girigiri 式「脚本内 Base64 编码直链」解码；
+ * - HANIME1_DIRECT：hanime1 式「MP4 直链内嵌播放页 HTML」按清晰度标签取最高一档。
  */
 @Serializable
 enum class VideoMode {
     INTERCEPT,
     SILISILI_POST,
     GIRIGIRI_B64,
+    HANIME1_DIRECT,
 }
 
 /**
@@ -165,6 +167,14 @@ data class SourceRule(
      * 默认空（无需验证）；接入 KazumiRules 时按规则里的 `antiCrawlerConfig` 映射而来。
      */
     val antiCrawler: AntiCrawlerConfig = AntiCrawlerConfig(),
+
+    /**
+     * 是否为成人（NSFW）站点。
+     *
+     * 为真时：「NSFW 内容屏蔽」开启 → 该源从数据源列表 **以及** 聚合搜索 / 播放候选中整体剔除
+     * （见 `SourceRuleRepository.getVisible`）；关闭 → 出现在主数据源列表并打「NSFW」标签。
+     */
+    val nsfw: Boolean = false,
 ) {
     /**
      * 步骤 1：搜索条目
@@ -181,6 +191,9 @@ data class SourceRule(
      * @param parserType 名称/链接列表解析方式（旧字段，仅作 [subjectFormatId] 缺失时的回退）
      * @param titleSelector CSS Selector 或 JsonPath，选取条目名称列表
      * @param linkSelector CSS Selector 或 JsonPath，选取条目链接列表；与 titleSelector 按顺序一一对应
+     * @param subjectNameSelector [SubjectFormat.A] 下相对每个 `<a>` 取标题的**子选择器**。
+     *   用于 hanime1 这类「`<a>` 的文本混有播放量/时长等统计信息」的站点：直接取 `a.text()`
+     *   会把脏文本当标题，导致后续标题相似度匹配失效。留空则回退 `title` 属性 → text。
      */
     @Serializable
     data class SearchStep(
@@ -196,6 +209,7 @@ data class SourceRule(
         val parserType: ParserType = ParserType.MultiTag,
         val titleSelector: String = "",
         val linkSelector: String = "",
+        val subjectNameSelector: String = "",
     ) {
         @Serializable
         enum class ParserType {
@@ -228,6 +242,10 @@ data class SourceRule(
      * @param episodeListSelector 从每个剧场面板中提取剧集列表的 CSS Selector
      * @param episodeLinkSelector 可选，当剧集元素不是 `<a>` 时，用此项提取链接
      * @param episodeNumberRegex 从剧集名称中提取序号的正则，期望命名分组 `ep`
+     * @param selfEpisodeWhenEmpty 「详情页自身即播放页」的站点（如 hanime1 的单集视频）
+     *   没有独立剧集列表：解析不到任何剧集时，把详情页本身作为唯一一集，
+     *   名称用 [selfEpisodeName]。不开启则保持现状（空剧集 → 详情页不可播）。
+     * @param selfEpisodeName [selfEpisodeWhenEmpty] 生效时的剧集名称。
      */
     @Serializable
     data class EpisodesStep(
@@ -240,6 +258,8 @@ data class SourceRule(
         val episodeListSelector: String = "",
         val episodeLinkSelector: String = "",
         val episodeNumberRegex: String = "",
+        val selfEpisodeWhenEmpty: Boolean = false,
+        val selfEpisodeName: String = "第 1 集",
     ) {
         /** 实际生效的线路解析格式。 */
         fun format(): ChannelFormat = ChannelFormat.from(channelFormatId, groupByLine)

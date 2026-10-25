@@ -199,6 +199,8 @@ object SourceAnalysisEngine {
                 else AnalysisItem("视频匹配策略", CheckStatus.PASS, "SILISILI_POST：${rule.video.silisiliFormField}")
             VideoMode.GIRIGIRI_B64 ->
                 AnalysisItem("视频匹配策略", CheckStatus.PASS, "GIRIGIRI_B64：脚本内 Base64 解码，无需额外配置。")
+            VideoMode.HANIME1_DIRECT ->
+                AnalysisItem("视频匹配策略", CheckStatus.PASS, "HANIME1_DIRECT：播放页内联 MP4 直链，取最高清晰度档。")
         }
 
         // 请求头 / 缓存

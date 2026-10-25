@@ -30,9 +30,10 @@ data class SettingsUiState(
     val sources: List<ResourceSource> = emptyList(),
     val currentSourceId: String = SourceHolder.DEFAULT_SOURCE_ID,
     val cycaniLoginState: CycaniLoginState = CycaniLoginState.LoggedOut,
+    /** 未登录点击了次元城类源：UI 据此跳转全屏登录页（不再使用弹窗）。 */
     val showLoginDialog: Boolean = false,
-    val loginError: String? = null,
-    val isLoggingIn: Boolean = false,
+    /** 触发登录的次元城源 id（登录成功后自动切到该源）。 */
+    val pendingSourceId: String? = null,
     /** 资源源编辑弹窗是否打开；[editingSource] 为 null 表示「新增」，否则为「编辑」。 */
     val editorOpen: Boolean = false,
     val editingSource: ResourceSource? = null,
@@ -43,13 +44,10 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor() : ViewModel() {
 
-    /** 登录弹窗内部状态（loading / 错误信息）。 */
-    private val loginDialogState = MutableStateFlow(LoginDialogState())
-
     /** 用户点击 cycani 类源后暂存的目标源 id，用于登录成功后自动切换。 */
     private val pendingSourceId = MutableStateFlow<String?>(null)
 
-    /** 前 5 个流（源列表/当前源/登录态/待切换/登录弹窗）组合成的中间结果。
+    /** 前 4 个流（源列表/当前源/登录态/待切换）组合成的中间结果。
      * 说明：kotlinx.coroutines 的 [combine] 只提供 2~5 个流的重载，
      * 多于 5 个需分批组合，否则会误匹配到 vararg[Array<T>] 重载导致类型推断失败。 */
     private data class SourceLoginCombo(
@@ -57,7 +55,6 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
         val currentId: String,
         val loginState: CycaniLoginState,
         val pendingId: String?,
-        val dialogState: LoginDialogState,
     )
 
     private val sourceLoginCombo: Flow<SourceLoginCombo> = combine(
@@ -65,14 +62,12 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
         SourceHolder.currentSourceIdFlow,
         CycaniAuthManager.loginState,
         pendingSourceId,
-        loginDialogState,
-    ) { sources, currentId, loginState, pendingId, dialogState ->
+    ) { sources, currentId, loginState, pendingId ->
         SourceLoginCombo(
             sources = sources,
             currentId = currentId,
             loginState = loginState,
             pendingId = pendingId,
-            dialogState = dialogState,
         )
     }
 
@@ -89,8 +84,7 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
             currentSourceId = combo.currentId,
             cycaniLoginState = combo.loginState,
             showLoginDialog = needLogin,
-            loginError = if (needLogin) combo.dialogState.error else null,
-            isLoggingIn = if (needLogin) combo.dialogState.isLoading else false,
+            pendingSourceId = combo.pendingId,
             subscriptions = subs,
         )
     }.stateIn(
@@ -106,7 +100,7 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
     /**
      * 选中某个资源源作为默认。
      * - 非 cycani 类源：直接切换；
-     * - cycani 类源：若已登录则切换，未登录则弹出登录框（不切换）。
+     * - cycani 类源：若已登录则切换，未登录则记下 pendingSourceId（UI 跳转登录页）。
      */
     fun selectSource(id: String) {
         val rs = SourceHolder.getResourceSource(id) ?: return
@@ -117,11 +111,10 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
 
         if (rs.type == SourceMode.Cycanime && !CycaniAuthManager.isLoggedIn) {
             pendingSourceId.value = id
-            loginDialogState.value = LoginDialogState()
             return
         }
 
-        clearPendingAndLoginDialog()
+        pendingSourceId.value = null
         viewModelScope.launch { SourceHolder.switchSource(id) }
     }
 
@@ -286,31 +279,13 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
     private val _verifyMessage = MutableStateFlow<String?>(null)
     val verifyMessage: StateFlow<String?> = _verifyMessage.asStateFlow()
 
-    /**
-     * 执行源站登录；成功后自动切换到目标 cycani 类资源源。
-     */
-    fun login(username: String, password: String) {
-        if (username.isBlank() || password.isBlank()) {
-            loginDialogState.value = LoginDialogState(error = "请输入账号和密码")
-            return
-        }
+    // ───────── 次元城登录 / 注册 ─────────
+    // 登录与注册已改为全屏页面（Screen.CycaniLogin / CycaniRegister，ViewModel 见 ui/cycani/CycaniAuthViewModel）。
+    // 这里只负责：未登录点击 cycani 源时记下 pendingSourceId，并在离开 / 登录后清理。
 
-        viewModelScope.launch {
-            loginDialogState.value = LoginDialogState(isLoading = true)
-            val error = CycaniAuthManager.login(username, password)
-            loginDialogState.value = LoginDialogState(error = error)
-
-            if (error == null) {
-                val targetId = pendingSourceId.value
-                if (targetId != null &&
-                    SourceHolder.getResourceSource(targetId)?.type == SourceMode.Cycanime
-                ) {
-                    pendingSourceId.value = null
-                    SourceHolder.switchSource(targetId)
-                }
-                clearPendingAndLoginDialog()
-            }
-        }
+    /** 清除「待登录的源」标记（UI 跳转登录页后调用，避免返回时重复触发跳转）。 */
+    fun dismissLoginDialog() {
+        pendingSourceId.value = null
     }
 
     /**
@@ -319,26 +294,11 @@ class SettingsViewModel @Inject constructor() : ViewModel() {
      */
     fun logout() {
         CycaniAuthManager.clearSession()
-        clearPendingAndLoginDialog()
+        pendingSourceId.value = null
         if (SourceHolder.currentSourceMode == SourceMode.Cycanime) {
             viewModelScope.launch {
                 SourceHolder.switchSource(SourceHolder.DEFAULT_SOURCE_ID)
             }
         }
     }
-
-    /** 关闭登录弹窗。 */
-    fun dismissLoginDialog() {
-        clearPendingAndLoginDialog()
-    }
-
-    private fun clearPendingAndLoginDialog() {
-        pendingSourceId.value = null
-        loginDialogState.value = LoginDialogState()
-    }
-
-    private data class LoginDialogState(
-        val isLoading: Boolean = false,
-        val error: String? = null,
-    )
 }

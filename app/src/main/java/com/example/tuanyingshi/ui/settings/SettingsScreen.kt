@@ -66,6 +66,7 @@ import com.example.tuanyingshi.ui.personalization.PersonalizationSettingsContent
 import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.DebugPrefs
 import com.example.tuanyingshi.util.ProxyHolder
+import com.example.tuanyingshi.util.SettingsNavPrefs
 import com.example.tuanyingshi.util.UpdateChecker
 
 /**
@@ -89,7 +90,10 @@ fun SettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsListScreen(navController: NavController) {
-    val debugModeEnabled by DebugPrefs.debugModeEnabled.collectAsStateWithLifecycle()
+    val debugModeEnabledFlow by DebugPrefs.debugModeEnabled.collectAsStateWithLifecycle()
+    // 兜底：本页从关于页返回重新进入组合时，直接重读持久化值，
+    // 避免任何 Flow 时序问题导致「已解锁但调试模式入口不出现」
+    val debugModeEnabled = debugModeEnabledFlow || remember { DebugPrefs.isDebugModeEnabled() }
     val backendMode by BackendPrefs.enabled.collectAsStateWithLifecycle()
     val user by BackendAccount.userState.collectAsStateWithLifecycle()
     val loggedIn = user != null
@@ -125,6 +129,9 @@ private fun SettingsListScreen(navController: NavController) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // 设置项一多（应用/数据/其他三组 + 调试模式等条件入口）会超出手机屏幕，
+                // 必须可滚动，否则底部项（如「其他」里的调试模式入口）被截断且无法触达
+                .verticalScroll(rememberScrollState())
                 .widthIn(max = maxContentWidth)
                 .padding(innerPadding),
         ) {
@@ -269,19 +276,75 @@ private fun SettingsListScreen(navController: NavController) {
 }
 
 /**
+ * 平板双栏布局进入/返回时的初始选中分区：
+ * - 「返回后重置为默认选项」开启 → 恒为「通用」；
+ * - 关闭 → 恢复 [SettingsNavPrefs] 记录的上次分区，但该分区当前不可见时
+ *   （后端模式隐藏数据源/弹幕源、未解锁调试模式、未登录账号管理）回退「通用」。
+ */
+private fun initialSettingsSection(
+    resetToDefaultOnReturn: Boolean,
+    backendMode: Boolean,
+    debugModeEnabled: Boolean,
+    loggedIn: Boolean,
+): String {
+    if (resetToDefaultOnReturn) return "general"
+    val available = buildSet {
+        add("general")
+        add("notification")
+        add("personalization")
+        add("proxy")
+        add("backup")
+        add("backend")
+        add("about")
+        add("software_update")
+        if (!backendMode) {
+            add("data")
+            add("danmaku")
+        }
+        if (debugModeEnabled) add("debug")
+        if (backendMode && loggedIn) add("account")
+    }
+    val last = SettingsNavPrefs.currentSection()
+    return if (last in available) last else "general"
+}
+
+/**
  * 平板端：左侧设置分类菜单 + 右侧内容面板。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsTwoPaneScreen(navController: NavController) {
-    val debugModeEnabled by DebugPrefs.debugModeEnabled.collectAsStateWithLifecycle()
+    val debugModeEnabledFlow by DebugPrefs.debugModeEnabled.collectAsStateWithLifecycle()
+    // 兜底：同手机端，重进组合时直接重读持久化值
+    val debugModeEnabled = debugModeEnabledFlow || remember { DebugPrefs.isDebugModeEnabled() }
     val backendMode by BackendPrefs.enabled.collectAsStateWithLifecycle()
     val user by BackendAccount.userState.collectAsStateWithLifecycle()
     val loggedIn = user != null
+    // 「返回后重置为默认选项」开关（通用设置里可改）：开启 = 从二级页返回时回到「通用」；
+    // 关闭（默认）= 保持返回前选中的设置分区
+    val resetToDefaultOnReturn by SettingsNavPrefs.resetToDefaultOnReturn.collectAsStateWithLifecycle()
     // 新手引导入口易误触：用确认弹窗二次确认
     var showOnboardingConfirm by remember { mutableStateOf(false) }
-    var selectedId by remember { mutableStateOf("general") }
+    // 从二级页面返回后本页会重新组合（remember 状态随之丢失）：
+    // selectedId 初始值按偏好决定——开关开启 → 「通用」；关闭 → 恢复上次选中的分区
+    // （该分区当前不可见时回退「通用」，如后端模式下恢复「数据源管理」）。
+    var selectedId by remember {
+        mutableStateOf(
+            initialSettingsSection(
+                resetToDefaultOnReturn = resetToDefaultOnReturn,
+                backendMode = backendMode,
+                debugModeEnabled = debugModeEnabled,
+                loggedIn = loggedIn,
+            )
+        )
+    }
     val settingsVm: SettingsViewModel = hiltViewModel()
+
+    // 切换左菜单分区并持久化，供「保持位置」策略在返回时恢复
+    fun selectSection(id: String) {
+        selectedId = id
+        SettingsNavPrefs.setLastSection(id)
+    }
 
     Row(
         modifier = Modifier
@@ -322,35 +385,35 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                 selectedId = selectedId,
                 icon = Icons.Filled.CleanHands,
                 title = "通用",
-                onClick = { selectedId = "general" },
+                onClick = { selectSection("general") },
             )
             SettingsMenuItem(
                 id = "notification",
                 selectedId = selectedId,
                 icon = Icons.Filled.LightMode,
                 title = "消息通知",
-                onClick = { selectedId = "notification" },
+                onClick = { selectSection("notification") },
             )
             SettingsMenuItem(
                 id = "personalization",
                 selectedId = selectedId,
                 icon = Icons.Filled.Tune,
                 title = "个性功能",
-                onClick = { selectedId = "personalization" },
+                onClick = { selectSection("personalization") },
             )
             SettingsMenuItem(
                 id = "proxy",
                 selectedId = selectedId,
                 icon = Icons.Filled.VpnKey,
                 title = "网络代理",
-                onClick = { selectedId = "proxy" },
+                onClick = { selectSection("proxy") },
             )
             SettingsMenuItem(
                 id = "backup",
                 selectedId = selectedId,
                 icon = Icons.Filled.Download,
                 title = "备份与恢复",
-                onClick = { selectedId = "backup" },
+                onClick = { selectSection("backup") },
             )
             SettingsMenuItem(
                 id = "onboarding",
@@ -367,7 +430,7 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                 selectedId = selectedId,
                 icon = Icons.Filled.Cloud,
                 title = "后端模式",
-                onClick = { selectedId = "backend" },
+                onClick = { selectSection("backend") },
             )
             if (!backendMode) {
                 SettingsMenuItem(
@@ -375,14 +438,14 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                     selectedId = selectedId,
                     icon = Icons.Filled.Info,
                     title = "数据源管理",
-                    onClick = { selectedId = "data" },
+                    onClick = { selectSection("data") },
                 )
                 SettingsMenuItem(
                     id = "danmaku",
                     selectedId = selectedId,
                     icon = Icons.Filled.Subtitles,
                     title = "弹幕源管理",
-                    onClick = { selectedId = "danmaku" },
+                    onClick = { selectSection("danmaku") },
                 )
             }
 
@@ -392,14 +455,14 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                 selectedId = selectedId,
                 icon = Icons.Filled.Info,
                 title = "关于",
-                onClick = { selectedId = "about" },
+                onClick = { selectSection("about") },
             )
             SettingsMenuItem(
                 id = "software_update",
                 selectedId = selectedId,
                 icon = Icons.Filled.SystemUpdate,
                 title = "软件更新",
-                onClick = { selectedId = "software_update" },
+                onClick = { selectSection("software_update") },
             )
             if (debugModeEnabled) {
                 SettingsMenuItem(
@@ -438,6 +501,9 @@ private fun SettingsTwoPaneScreen(navController: NavController) {
                     },
                     onAnalyze = { ruleId ->
                         navController.navigate(Screen.SourceAnalysis.create(ruleId))
+                    },
+                    onNavigateLogin = { pendingSourceId ->
+                        navController.navigate(Screen.CycaniLogin.create(pendingSourceId = pendingSourceId))
                     },
                 )
                 "backend" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {

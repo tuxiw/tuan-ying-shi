@@ -7,7 +7,8 @@
 ## 简介
 
 团影视是一款主打动漫、番剧在线观看的 Android App，采用全量 Jetpack Compose (Material 3) 构建。
-内置内容源规则引擎与订阅机制，可对接公开站点（如次元城等，经 WebView 渲染 + 解析，失败自动降级），
+内置多数据源：次元城（WebView 渲染 + Jsoup 解析，失败自动降级）、Girigiri / Hanime1（原生 API 客户端，
+自动处理 Cloudflare 验证）、嘶哩嘶哩与弹弹play，以及自定义规则源（CSS / XPATH）与订阅机制；
 同时也支持对接自建的专属后端（账号、内容、视频、弹幕、设备上报、用户分析），实现完整的私服闭环。
 
 本项目与后端（`springboot`，Spring Boot 3 + Java 17）、管理后台（`admin-web`，Vue3）配套使用。
@@ -16,15 +17,23 @@
 
 ## 功能特性
 
-- **四大主模块**：首页 / 排期表 / 排行榜 / 我的（底部导航）
-- **在线播放**：HLS (`m3u8`) 播放，基于 Media3 ExoPlayer
-- **弹幕**：播放页弹幕渲染与发送
-- **个人中心**：追番、观看历史、评论（需后端模式 + 已登录）
-- **内容源规则引擎 + 订阅源**：`SourceRule` + `RuleExecutor`（Jsoup / CSS / 正则 / WebView），支持自定义站点与订阅
-- **账号体系**：邮箱验证 + 账号密码 + JWT
-- **扫码登录**：App 端「出码 / 扫一扫确认」+ 后台登录页「扫码登录」完整闭环
-- **专属后端模式**（实验性，默认未开启）：对接自建后端，启用账号、内容托管、弹幕、设备上报与分析
-- **新手引导**（实验性）
+- **四大主模块**：首页 / 排期表 / 排行榜 / 我的（底部导航，平板自动切换左侧 NavigationRail）
+- **在线播放**：HLS (`m3u8`) 播放，基于 Media3 ExoPlayer，支持多播放源 / 线路切换
+- **弹幕**：接入弹弹play 弹幕源，播放页弹幕渲染与发送
+- **多数据源**：
+  - 次元城：WebView 渲染 + 解析，支持源站账号登录 / 注册
+  - Girigiri / Hanime1：原生 API 客户端，自动处理 Cloudflare 验证
+  - 嘶哩嘶哩、弹弹play：内置聚合
+  - 自定义规则源（CSS / XPATH）+ 订阅源（每小时自动更新）
+  - 内置 API 源支持在「数据源管理」中设置镜像网址
+- **智能数据源切换**：按 WiFi / 移动数据 / 以太网自动选择数据源，加载失败自动切换并提示
+- **NSFW 内容屏蔽**：成人内容源打标，开启后自动隐藏数据源与相关内容
+- **账号体系**：次元城源站账号；专属后端模式（JWT）账号；扫码登录完整闭环
+- **个人中心**：浏览历史 / 收藏 / 追番 / 评分 / 我的下载
+- **备份与恢复**：本地导出导入 + WebDAV 同步 + 设备直连，可按分类选择恢复范围
+- **平板适配**：内容限宽居中、详情双栏布局、网格列数按屏幕宽度自适应
+- **网络代理**：系统代理 / 自定义 HTTP、SOCKS 代理
+- **其他**：新手引导、欢迎公告、软件更新检查、通知设置与离线模式提示
 
 ---
 
@@ -32,13 +41,17 @@
 
 | 分类 | 选型 |
 |---|---|
-| 语言 | Kotlin |
+| 语言 | Kotlin 2.0 |
 | UI | Jetpack Compose (Material 3) |
-| 最低 / 目标 SDK | minSdk 24 / targetSdk 35 |
-| 播放器 | Media3 ExoPlayer（HLS / m3u8） |
-| 网络 | Retrofit + Gson |
-| 扫码 | zxing-android-embedded |
-| 依赖管理 | Gradle Version Catalog (`gradle/libs.versions.toml`) |
+| 最低 / 目标 SDK | minSdk 24 / targetSdk 35（compileSdk 35） |
+| 播放器 | Media3 ExoPlayer 1.4（HLS / m3u8） |
+| 网络 | Retrofit 2.11 + OkHttp 4.12 + Gson |
+| 依赖注入 | Hilt 2.51 |
+| 本地存储 | Room 2.6 |
+| 图片加载 | Coil 2.6 |
+| 后台任务 | WorkManager 2.10 |
+| 扫码 | zxing-android-embedded 4.3 |
+| 构建 | AGP 8.9 + Gradle Version Catalog (`gradle/libs.versions.toml`) |
 | 包名 | `com.example.tuanyingshi` |
 
 ---
@@ -61,7 +74,8 @@ android/
 
 ## 环境要求
 
-- **Android Studio** Hedgehog (2023.1) 或更高版本
+- **Android Studio** Koala (2024.1) 或更高版本（AGP 8.9）
+- **JDK** 17
 - **Android SDK**：compileSdk / targetSdk 35，minSdk 24
 
 ---
@@ -82,6 +96,12 @@ android/
 
 ## 配置说明
 
+### 数据源与镜像
+
+默认使用内置公开内容源。在 App 内「设置 → 数据 → 数据源管理」中可切换数据源；
+次元城 / Girigiri / 嘶哩嘶哩 / Hanime1 等内置 API 源支持修改镜像网址（三点菜单 → 编辑），
+规则源（CSS / XPATH）可自定义或通过订阅导入。
+
 ### 专属后端模式（可选，实验性）
 
 默认**未开启**。在 App 内「设置 → 数据 → 后端模式」填写后端地址并开启后，App 会切换为对接自建
@@ -101,9 +121,11 @@ Spring Boot 后端，启用账号登录、内容托管、弹幕、设备上报�
 
 | 组件 | 版本 |
 |---|---|
-| Android App | `v0.6.6` |
+| Android App | `v0.8.4` |
 | 后端 (springboot) | `1.0.0` |
 | 管理后台 (admin-web) | `1.0.0` |
+
+各版本安装包见 [Gitee Releases](https://gitee.com/tuxiw/tuan-ying-shi/releases)。
 
 ---
 

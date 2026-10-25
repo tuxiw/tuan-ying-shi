@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.ui.navigation.Screen
+import com.example.tuanyingshi.util.SourceHolder
+import com.example.tuanyingshi.util.SourceMode
 import com.example.tuanyingshi.util.UiPrefs
 
 /**
@@ -43,6 +46,15 @@ import com.example.tuanyingshi.util.UiPrefs
 @Composable
 fun NavigationRailBar(navController: NavController, currentRoute: String?) {
     val showLabels by UiPrefs.navLabelsVisible.collectAsStateWithLifecycle()
+    // Hanime1 主数据源没有周更排期概念（站点无周榜单数据），隐藏「排期表」入口。
+    val isHanime1 by SourceHolder.sourceModeFlow.collectAsStateWithLifecycle()
+    val tabs = remember(isHanime1) {
+        if (isHanime1 == SourceMode.Hanime1) {
+            baseTabs.filter { it.route != Screen.Schedule.route }
+        } else {
+            baseTabs
+        }
+    }
     val railWidth = if (showLabels) 104.dp else 64.dp
 
     Column(

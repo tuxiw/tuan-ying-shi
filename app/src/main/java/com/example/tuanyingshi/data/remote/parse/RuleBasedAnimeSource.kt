@@ -29,7 +29,7 @@ class RuleBasedAnimeSource(private val rule: SourceRule) : AnimeSource {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,

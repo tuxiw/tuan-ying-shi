@@ -8,6 +8,7 @@ import com.example.tuanyingshi.data.remote.backend.BackendAccount
 import com.example.tuanyingshi.util.DownloadManager
 import com.example.tuanyingshi.util.NetworkMonitor
 import com.example.tuanyingshi.util.NotifPrefs
+import com.example.tuanyingshi.util.SmartSourceSwitcher
 import com.example.tuanyingshi.util.ProxyHolder
 import com.example.tuanyingshi.util.AutoBackup
 import com.example.tuanyingshi.util.sync.WebDavSync
@@ -38,6 +39,8 @@ class TuanyingApp : Application(), ImageLoaderFactory {
 
         // 初始化网络状态监测（离线模式判断）
         NetworkMonitor.init(this)
+        // 启动「根据当前网络智能切换数据源」监听（默认开启，见 SmartSourcePrefs）
+        SmartSourceSwitcher.init()
         // 启动即离线时给一次提示；可在「设置 → 消息通知 → 离线模式提示」中关闭
         if (!NetworkMonitor.isOnline.value && NotifPrefs.isOfflineToastEnabled()) {
             android.widget.Toast.makeText(

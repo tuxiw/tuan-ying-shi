@@ -38,6 +38,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.BuildConfig
 import com.example.tuanyingshi.R
+import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.UpdateChecker
 import com.example.tuanyingshi.util.UpdatePrefs
 import com.example.tuanyingshi.util.UpdateResult
@@ -110,6 +112,15 @@ fun SoftwareUpdateContent() {
     val lastCheckedAt by UpdateChecker.lastCheckedAt.collectAsStateWithLifecycle()
     val autoCheck by UpdatePrefs.autoCheckUpdate.collectAsStateWithLifecycle()
     val inApp by UpdatePrefs.inAppUpdate.collectAsStateWithLifecycle()
+    // 后端模式下更新检查实际走自建后端 ops/version/check（见 UpdateChecker.checkFromBackend），
+    // 「更新通道」展示必须随之切换，不能永远显示官方发布地址
+    val backendMode by BackendPrefs.enabled.collectAsStateWithLifecycle()
+    val backendApiBase = remember(backendMode) { BackendPrefs.apiBaseUrl }
+    val updateChannel = when {
+        !backendMode -> UpdateChecker.UPDATE_URL
+        backendApiBase.isBlank() -> "未配置（设置 → 后端模式）"
+        else -> backendApiBase + "ops/version/check"
+    }
 
     val versionName = UpdateChecker.currentVersionName
     val versionCode = UpdateChecker.currentVersionCode
@@ -208,7 +219,7 @@ fun SoftwareUpdateContent() {
             InfoRow(
                 icon = Icons.Filled.CloudDownload,
                 label = "更新通道",
-                value = UpdateChecker.UPDATE_URL,
+                value = updateChannel,
             )
             DividerLine()
             InfoRow(
@@ -254,7 +265,11 @@ fun SoftwareUpdateContent() {
 
     Spacer(Modifier.height(14.dp))
     Text(
-        "仅在「团影视」官方发布通道检查更新，不会收集任何个人信息。",
+        text = if (backendMode) {
+            "更新信息来自你配置的自建后端；「接收软件更新推送」只影响启动时的自动检查，手动检查不受影响。"
+        } else {
+            "仅在「团影视」官方发布通道检查更新，不会收集任何个人信息。"
+        },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 4.dp),

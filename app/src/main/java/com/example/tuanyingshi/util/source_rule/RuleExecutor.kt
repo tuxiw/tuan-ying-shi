@@ -7,6 +7,7 @@ import org.seimicrawler.xpath.JXNode
 import com.example.tuanyingshi.data.remote.dto.AnimeDetailBean
 import com.example.tuanyingshi.data.remote.dto.EpisodeBean
 import com.example.tuanyingshi.data.remote.parse.util.WebViewUtil
+import com.example.tuanyingshi.util.ChromeMobileUserAgent
 import com.example.tuanyingshi.util.DownloadManager
 import com.example.tuanyingshi.util.applyProxy
 import com.example.tuanyingshi.util.log
@@ -203,12 +204,24 @@ object RuleExecutor {
     }
 
     private suspend fun searchOnce(rule: SourceRule, keyword: String): List<SearchResult> {
+        val tag = srcTag(rule)
+        // 命中缓存：同关键词/同源在窗口内不再重复抓取（聚合搜索、详情按标题匹配会反复触发）。
+        val key = searchCacheKey(rule.id, keyword)
+        val now = System.currentTimeMillis()
+        searchResultCache[key]?.valid(now)?.let { cached ->
+            "$tag searchOnce: 命中缓存 ${cached.size} 条（跳过抓取）".log(LOG_TAG, "searchOnce")
+            return cached
+        }
         // 引擎路由：Kazumi 风格 XPath / API 走各自实现；其余（animeko CSS）走原生逻辑。
-        return when (rule.engine) {
+        val results = when (rule.engine) {
             RuleEngineKind.Xpath -> searchOnceXpath(rule, keyword)
             RuleEngineKind.Api -> searchOnceApi(rule, keyword)
             RuleEngineKind.Css -> searchOnceCss(rule, keyword)
         }
+        if (results.isNotEmpty()) {
+            searchResultCache[key] = CacheEntry(results, now + SEARCH_CACHE_MS)
+        }
+        return results
     }
 
     private suspend fun searchOnceCss(rule: SourceRule, keyword: String): List<SearchResult> {
@@ -321,12 +334,26 @@ object RuleExecutor {
      * @return [AnimeDetailBean]；失败返回 null（调用方应回退原解析器）。
      */
     suspend fun getAnimeDetail(rule: SourceRule, detailUrl: String): AnimeDetailBean? {
+        val tag = srcTag(rule)
+        // 命中缓存：重复进入同一详情页（返回/再次点开）不再整页重抓。
+        val key = detailCacheKey(rule.id, detailUrl)
+        val now = System.currentTimeMillis()
+        detailCache[key]?.valid(now)?.let { cached ->
+            if (cached.title.isNotBlank()) {
+                "$tag getAnimeDetail: 命中缓存 title=${cached.title}".log(LOG_TAG, "getAnimeDetail")
+                return cached
+            }
+        }
         // 剧集引擎路由：Kazumi XPath / API 走各自实现（搜索页 detailUrl 即条目/章节入口）
-        return when (rule.chapterEngine) {
+        val bean = when (rule.chapterEngine) {
             RuleEngineKind.Api -> getAnimeDetailApi(rule, detailUrl)
             RuleEngineKind.Xpath -> getAnimeDetailXpath(rule, detailUrl)
             RuleEngineKind.Css -> getAnimeDetailCss(rule, detailUrl)
         }
+        if (bean != null && bean.title.isNotBlank()) {
+            detailCache[key] = CacheEntry(bean, now + DETAIL_CACHE_MS)
+        }
+        return bean
     }
 
     private suspend fun getAnimeDetailCss(rule: SourceRule, detailUrl: String): AnimeDetailBean? {
@@ -431,7 +458,43 @@ object RuleExecutor {
         val expireAtMillis: Long,
     )
 
+    /** 通用带过期时间的缓存条目（搜索结果 / 详情复用）。 */
+    private data class CacheEntry<V>(val value: V, val expireAt: Long) {
+        fun valid(now: Long): V? = if (expireAt > now) value else null
+    }
+
     private val episodeCache = java.util.concurrent.ConcurrentHashMap<String, EpisodeCacheEntry>()
+
+    /**
+     * 搜索结果缓存：聚合搜索与「详情按标题匹配」都会对同关键词反复发起搜索，
+     * 缓存后同一窗口内只抓一次（命中后即跳过抓取 + 反爬校验）。
+     */
+    private val searchResultCache = ConcurrentHashMap<String, CacheEntry<List<SearchResult>>>()
+
+    /**
+     * 详情缓存：重复进入同一详情页（返回/再次点开）不再整页重抓，直接命中。
+     * 元数据 TTL 取 5 分钟，对番剧简介/剧集而言足够新鲜。
+     */
+    private val detailCache = ConcurrentHashMap<String, CacheEntry<AnimeDetailBean>>()
+
+    private const val SEARCH_CACHE_MS = 120_000L
+    private const val DETAIL_CACHE_MS = 300_000L
+
+    private fun searchCacheKey(ruleId: String, keyword: String) = "s|$ruleId|${keyword.lowercase()}"
+    private fun detailCacheKey(ruleId: String, url: String) = "d|$ruleId|$url"
+
+    /** 清空全部抓取结果缓存（规则变更 / 手动刷新时调用）。 */
+    fun clearCaches(ruleId: String? = null) {
+        if (ruleId == null) {
+            episodeCache.clear()
+            searchResultCache.clear()
+            detailCache.clear()
+        } else {
+            episodeCache.keys.removeIf { it.startsWith("$ruleId|") }
+            searchResultCache.keys.removeIf { it.startsWith("s|$ruleId|") }
+            detailCache.keys.removeIf { it.startsWith("d|$ruleId|") }
+        }
+    }
 
     private fun cacheKey(rule: SourceRule, subjectUrl: String) = "${rule.id}|$subjectUrl"
 
@@ -452,14 +515,8 @@ object RuleExecutor {
         )
     }
 
-    /** 清空剧集缓存（规则被修改 / 手动刷新时用）。 */
-    fun clearEpisodeCache(ruleId: String? = null) {
-        if (ruleId == null) {
-            episodeCache.clear()
-            return
-        }
-        episodeCache.keys.removeIf { it.startsWith("$ruleId|") }
-    }
+    /** 清空剧集缓存（规则被修改 / 手动刷新时用）。同时清空搜索/详情缓存，避免脏数据残留。 */
+    fun clearEpisodeCache(ruleId: String? = null) = clearCaches(ruleId)
 
     /**
      * 测试诊断用：判断播放页是否可加载、是否被拦。
@@ -517,6 +574,7 @@ object RuleExecutor {
             VideoMode.INTERCEPT -> VideoMatch(matchIntercept(rule, absoluteUrl), headers)
             VideoMode.SILISILI_POST -> VideoMatch(matchSilisiliPost(rule, absoluteUrl), headers)
             VideoMode.GIRIGIRI_B64 -> VideoMatch(matchGirigiriB64(absoluteUrl, rule.headers.userAgent, referer = headers["Referer"] ?: ""), headers)
+            VideoMode.HANIME1_DIRECT -> VideoMatch(matchHanime1Direct(rule, absoluteUrl), headers)
         }
     }
 
@@ -528,12 +586,24 @@ object RuleExecutor {
     private fun selectSubjectsA(html: String, rule: SourceRule, baseUrl: String): List<SearchResult> {
         val document = Jsoup.parse(html)
         val elements = selectOrEmpty(document, rule.search.titleSelector)
-        return elements.mapNotNull { a ->
-            val name = a.attr("title").takeIf { it.isNotBlank() } ?: a.text()
+        val nameSelector = rule.search.subjectNameSelector.trim()
+        val result = elements.mapNotNull { a ->
+            val name = nameSelector.takeIf { it.isNotBlank() }
+                ?.let { selectOrEmpty(a, it).firstOrNull()?.text()?.trim()?.takeIf { n -> n.isNotBlank() } }
+                ?: a.attr("title").takeIf { it.isNotBlank() }
+                ?: a.text()
             val href = a.attr("href")
             val cover = extractCoverFromSubject(a, baseUrl)
             buildSubject(name, href, baseUrl, cover)
         }
+        // 一个视频可能有多条 `<a>` 指同一 URL（缩略图 + 标题各一个），按最终 URL 去重。
+        // 不去重会让「详情按标题匹配」与聚合搜索重复下钻同一条目。
+        val before = result.size
+        val distinct = result.distinctBy { it.url }
+        if (distinct.size != before) {
+            "selectSubjectsA: 去重 $before → ${distinct.size}".log(LOG_TAG, "selectSubjects")
+        }
+        return distinct
     }
 
     /**
@@ -713,10 +783,19 @@ object RuleExecutor {
      */
     fun selectEpisodes(page: Element, rule: SourceRule, subjectUrl: String): List<EpisodeGroup> {
         val baseUrl = episodeBaseUrl(subjectUrl)
-        return when (rule.episodes.format()) {
+        val groups = when (rule.episodes.format()) {
             ChannelFormat.IndexGrouped -> selectIndexGrouped(page, rule, baseUrl)
             ChannelFormat.NoChannel -> selectNoChannel(page, rule, baseUrl)
         }
+        // 「详情页自身即播放页」的站点（hanime1 单集视频）没有剧集列表：
+        // 解析不到任何剧集时把详情页本身作为唯一一集，否则详情页永远不可播。
+        val step = rule.episodes
+        if (groups.isEmpty() && step.selfEpisodeWhenEmpty && subjectUrl.isNotBlank()) {
+            val name = step.selfEpisodeName.ifBlank { "第 1 集" }
+            "selectEpisodes: 无剧集列表 → 自episode回退 '$name' ← ${subjectUrl.take(120)}".log(LOG_TAG, "selectEpisodes")
+            return listOf(EpisodeGroup("默认", listOf(EpisodeItem(name, subjectUrl, null))))
+        }
+        return groups
     }
 
     /**
@@ -1074,13 +1153,103 @@ object RuleExecutor {
         }
     }
 
+    /**
+     * hanime1 式：MP4 直链就内联在播放页 HTML 里（`video source` / `video[src]` / `[data-url]` /
+     * `a[href*=".mp4"]`），按 `size` / `label` / `data-quality` 判清晰度，取最高一档。
+     *
+     * 为什么不用 [matchIntercept]：直链型站点根本不需要 WebView 拦截 —— 走
+     * [fetchDetailHtml] 复用 Cloudflare 过盾后的 clearance + UA，一次 OkHttp 就能拿到全部清晰度，
+     * 且能按标签选出最高档（INTERCEPT 只能拿第一个命中的请求）。
+     * 若 HTML 里确实解析不到（播放器改版为 JS 注入），再退一层 WebView 拦截兜底。
+     */
+    private suspend fun matchHanime1Direct(rule: SourceRule, absoluteUrl: String): String {
+        val tag = srcTag(rule)
+        val html = fetchDetailHtml(absoluteUrl, rule, "$tag/hanime1").first
+        if (html.isNullOrBlank()) {
+            "$tag hanime1: 页面为空，退 WebView 拦截".log(LOG_TAG, "matchHanime1Direct")
+            return matchIntercept(rule, absoluteUrl)
+        }
+        val direct = pickHanime1Source(html, absoluteUrl, tag)
+        if (direct.isNotBlank()) return direct
+        "$tag hanime1: HTML 未内联直链，退 WebView 拦截".log(LOG_TAG, "matchHanime1Direct")
+        return matchIntercept(rule, absoluteUrl)
+    }
+
+    /** 从播放页 HTML 中挑清晰度最高的视频直链。抽取顺序对齐 HaRu `_sources`。 */
+    private fun pickHanime1Source(html: String, pageUrl: String, tag: String): String {
+        val document = runCatching { Jsoup.parse(html) }.getOrNull() ?: return ""
+        val candidates = LinkedHashMap<String, String>() // label → url
+
+        fun add(label: String, rawUrl: String?) {
+            val url = resolveMediaUrl(rawUrl, pageUrl) ?: return
+            if (!looksLikeMedia(url)) return
+            candidates.putIfAbsent(if (label.isBlank()) "0p" else label.trim(), url)
+        }
+
+        document.select("video source").forEach { el ->
+            add(el.attr("size").ifBlank { el.attr("label") }, el.attr("src").ifBlank { el.attr("data-src") })
+        }
+        document.select("video[src], video[data-src]").forEach { el ->
+            add(
+                el.attr("data-quality").ifBlank { el.attr("height").ifBlank { el.attr("label") } },
+                el.attr("src").ifBlank { el.attr("data-src") },
+            )
+        }
+        document.select("[data-url], a[href*=\".mp4\"]").forEach { el ->
+            add(el.attr("data-quality").ifBlank { el.text() }, el.attr("data-url").ifBlank { el.attr("href") })
+        }
+        if (candidates.isEmpty()) {
+            "$tag hanime1: 未命中任何直链".log(LOG_TAG, "matchHanime1Direct")
+            return ""
+        }
+        val best = candidates.maxBy { qualityNumber(it.key) }
+        "$tag hanime1: ${candidates.size} 档 → 取 ${best.key} = ${best.value.take(140)}".log(LOG_TAG, "matchHanime1Direct")
+        return best.value
+    }
+
+    /** 相对地址 / 协议相对地址（`//cdn.x/a.mp4`）按播放页基准补全为绝对地址。 */
+    private fun resolveMediaUrl(raw: String?, pageUrl: String): String? {
+        val u = raw?.trim().orEmpty()
+        if (u.isBlank() || u.startsWith("javascript:", ignoreCase = true)) return null
+        return runCatching { URI(pageUrl).resolve(u).toString() }.getOrDefault(u)
+    }
+
+    private fun looksLikeMedia(url: String): Boolean {
+        val s = url.substringBefore('?').lowercase()
+        return s.endsWith(".mp4") || s.endsWith(".m3u8") || s.endsWith(".webm") || s.endsWith(".mkv") ||
+            s.contains(".mp4?") || s.contains("m3u8")
+    }
+
+    /** 从「1080p / 720P / size=1080 / 1920x1080」等标签里抠出代表清晰度的数字。 */
+    private fun qualityNumber(label: String): Int =
+        Regex("""(\d{3,4})""").find(label)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+    /**
+     * 播放所需请求头：[SourceRule.HeaderStep.referer] + [SourceRule.VideoStep.cookies]，
+     * 外加**过盾后**的动态 cookie / UA —— hanime1 这类站点的 MP4 直链只认同一浏览器指纹：
+     * `cf_clearance` 与 UA 绑定，UA 不一致（比如 ExoPlayer 默认 UA）立刻 403。
+     * 故仅当该 host 已有 clearance 时才覆写 UA，避免影响其它未过盾的源。
+     */
     private fun buildPlayHeaders(rule: SourceRule): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         val referer = rule.headers.referer.ifBlank { deriveRootUrl(rule) }
         if (referer.isNotBlank()) headers["Referer"] = referer
         if (rule.video.cookies.isNotBlank()) headers["Cookie"] = rule.video.cookies.replace("\n", "; ")
+        val host = hostOfUrl(referer).orEmpty()
+        if (host.isBlank()) return headers
+        val clearance = SourceCookieManager.cookieHeaderForHost(host)
+        if (!clearance.isNullOrBlank()) {
+            val staticCookie = rule.video.cookies.replace("\n", "; ")
+            val merged = if (staticCookie.isBlank()) clearance else "$staticCookie; $clearance"
+            headers["Cookie"] = merged
+            // clearance 与 UA 绑定：必须用过盾时那支 UA，否则视为另一个浏览器
+            SourceCookieManager.userAgentForHost(host)?.takeIf { it.isNotBlank() }
+                ?.let { headers["User-Agent"] = it }
+        }
         return headers
     }
+
+    private fun hostOfUrl(url: String): String? = runCatching { URI(url).host }.getOrNull()
 
     private fun md5Hex(input: String): String {
         val md = MessageDigest.getInstance("MD5")
@@ -1118,7 +1287,18 @@ object RuleExecutor {
         val referer = runCatching { URI(url).let { "${it.scheme}://${it.authority}/" } }.getOrDefault("")
         val ua = rule.headers.userAgent
         "$tag fetchDetailHtml: referer=$referer".log(LOG_TAG, "fetchDetailHtml")
-        val okHtml = fetchOkHttp(url, ua, referer, tag)
+        val raw = fetchOkHttpRaw(url, ua, referer, tag)
+        // Cloudflare：优先走「过盾 → cookie 回填 → 重发原请求」链路（对齐 HaRu）
+        if (CloudflareDetector.isChallenge(raw.code.takeIf { it > 0 }, raw.body)) {
+            val recovered = recoverFromCloudflare(url, ua, referer, tag)
+            val reason = recovered?.let { detectBlockReason(it) }
+            if (recovered != null && reason == null) {
+                "$tag fetchDetailHtml: CF 补救成功 len=${recovered.length}".log(LOG_TAG, "fetchDetailHtml")
+                return recovered to null
+            }
+            "$tag fetchDetailHtml: CF 补救未成功 reason=$reason → 继续原有兜底".log(LOG_TAG, "fetchDetailHtml")
+        }
+        val okHtml = if (raw.code in 200..299) raw.body else null
         if (okHtml != null) {
             val reason = detectBlockReason(okHtml)
             if (reason == null) {
@@ -1186,7 +1366,18 @@ object RuleExecutor {
         val referer = runCatching { URI(url).let { "${it.scheme}://${it.authority}/" } }.getOrDefault("")
         "$tag fetchSearchHtml: referer=$referer".log(LOG_TAG, "fetchSearchHtml")
         // 1. OkHttp 优先：苹果CMS 搜索结果多为服务端渲染，直抓即可拿到完整 HTML（秒回）。
-        val okHtml = fetchOkHttp(url, rule.headers.userAgent, referer, tag)
+        //    非 2xx（如 CF 的 403）也保留响应体，交给下面的 Cloudflare 补救链路判定。
+        val raw = fetchOkHttpRaw(url, rule.headers.userAgent, referer, tag)
+        if (CloudflareDetector.isChallenge(raw.code.takeIf { it > 0 }, raw.body)) {
+            val recovered = recoverFromCloudflare(url, rule.headers.userAgent, referer, tag)
+            val cfReason = recovered?.let { detectBlockReason(it) }
+            if (recovered != null && cfReason == null) {
+                "$tag fetchSearchHtml: CF 补救成功 len=${recovered.length}".log(LOG_TAG, "fetchSearchHtml")
+                return recovered to null
+            }
+            "$tag fetchSearchHtml: CF 补救未成功 reason=$cfReason → 继续原有兜底".log(LOG_TAG, "fetchSearchHtml")
+        }
+        val okHtml = if (raw.code in 200..299) raw.body else null
         if (okHtml != null) {
             val reason = detectBlockReason(okHtml)
             val parsed = selectSubjects(okHtml, rule).also { "$tag fetchSearchHtml: OkHttp 命中解析 okHtmlLen=${okHtml.length} parsed=${it.size}".log(LOG_TAG, "fetchSearchHtml") }
@@ -1212,8 +1403,23 @@ object RuleExecutor {
         return wv to (wv?.let { detectBlockReason(it) })
     }
 
+    /**
+     * OkHttp 抓取的原始结果（含状态码）。
+     *
+     * 对齐 HaRu 的 `validateStatus: status < 600`：403/503 必须**保留响应体**，
+     * 否则 Cloudflare 挑战页永远拿不到内容（旧实现非 2xx 直接返回 null，
+     * 恰好把 CF 拦截页丢掉，导致后面无法判定也无从补救）。
+     */
+    private data class RawFetch(val code: Int, val body: String?)
+
     /** lenient OkHttp 直抓页面（信任所有证书 + 带 UA / Host / Referer / Accept）。必须在 IO 线程执行，否则会抛 NetworkOnMainThreadException。 */
     private suspend fun fetchOkHttp(url: String, userAgent: String, referer: String, tag: String): String? {
+        val raw = fetchOkHttpRaw(url, userAgent, referer, tag)
+        return if (raw.code in 200..299) raw.body else null
+    }
+
+    /** 同 [fetchOkHttp]，但保留非 2xx 的响应体与状态码（Cloudflare 判定需要）。 */
+    private suspend fun fetchOkHttpRaw(url: String, userAgent: String, referer: String, tag: String): RawFetch {
         val t0 = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -1235,16 +1441,57 @@ object RuleExecutor {
                 val body = resp.body?.charStream()?.readText()
                 val cost = System.currentTimeMillis() - t0
                 "$tag fetchOkHttp: code=$code len=${body?.length ?: 0} cost=${cost}ms".log(LOG_TAG, "fetchOkHttp")
-                if (code !in 200..299) {
-                    "$tag fetchOkHttp: 非 2xx，返回 null（code=$code）".log(LOG_TAG, "fetchOkHttp")
-                    null
-                } else body
+                RawFetch(code, body)
             }.getOrElse { e ->
                 val cost = System.currentTimeMillis() - t0
                 "$tag fetchOkHttp: 异常 cost=${cost}ms ${e.javaClass.simpleName}: ${e.message}".log(LOG_TAG, "fetchOkHttp")
-                null
+                RawFetch(-1, null)
             }
         }
+    }
+
+    /**
+     * Cloudflare 补救：过一次盾 → cookie 回填 → **用网络层重发原请求**。
+     *
+     * 顺序严格对齐 HaRu：先让 [CfVerificationCoordinator] 用 WebView 完成验证（并把
+     * clearance + 真实 UA 写入 [SourceCookieManager]），再**重发原始网络请求**拿一份干净响应；
+     * 只有当重发仍被拦时，才退化为使用 WebView 收割的 HTML（兜底）。
+     *
+     * @return 可用于解析的 HTML；放弃时返回 null
+     */
+    private suspend fun recoverFromCloudflare(
+        url: String,
+        userAgent: String,
+        referer: String,
+        tag: String,
+    ): String? {
+        val host = runCatching { URI(url).host }.getOrNull() ?: ""
+        if (SourceCookieManager.hasClearance(host)) {
+            // 已有 clearance：说明盾过了但本次请求仍失败，不必再弹一次 WebView
+            "$tag CF: 已持有 clearance，跳过重复验证".log(LOG_TAG, "recoverFromCloudflare")
+            return null
+        }
+        "$tag CF: 命中 Cloudflare 挑战，启动 WebView 过盾 url=$url".log(LOG_TAG, "recoverFromCloudflare")
+        // 过盾一律用现代移动端 Chrome UA：cf_clearance 与 UA 绑定，且老旧 UA 会被 CF 反复挑战。
+        // 验证成功后 UA 会随 cookie 一起写进 SourceCookieManager，后续 OkHttp 自动对齐。
+        val result = CfVerificationCoordinator.verify(url, ChromeMobileUserAgent)
+        if (result == null) {
+            "$tag CF: 过盾失败（超时/取消）".log(LOG_TAG, "recoverFromCloudflare")
+            return null
+        }
+        // 用网络层重发原请求：此时 cookieJar 已有 clearance，多数站点可直接拿到正文
+        val retried = fetchOkHttp(url, userAgent, referer, tag)
+        if (!retried.isNullOrBlank() && !CloudflareDetector.isChallenge(retried)) {
+            "$tag CF: 重发原请求成功 len=${retried.length}".log(LOG_TAG, "recoverFromCloudflare")
+            return retried
+        }
+        val harvested = result.html
+        if (!harvested.isNullOrBlank() && !CloudflareDetector.isChallenge(harvested)) {
+            "$tag CF: 重发仍被拦，退回收割 HTML len=${harvested.length}".log(LOG_TAG, "recoverFromCloudflare")
+            return harvested
+        }
+        "$tag CF: 重发与收割均无效".log(LOG_TAG, "recoverFromCloudflare")
+        return null
     }
 
     /** WebView 抓页面（受全局 webViewLock 串行化，避免并发拖垮渲染进程）。 */

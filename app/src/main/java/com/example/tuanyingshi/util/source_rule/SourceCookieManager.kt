@@ -67,5 +67,14 @@ object SourceCookieManager {
         return runCatching { CookieManager.getInstance().getCookie(pageUrl) }.getOrNull() ?: ""
     }
 
+    /**
+     * 该 host 是否已拿到 Cloudflare 的 clearance cookie（`cf_clearance`）。
+     *
+     * 用于判断「还需不需要再走一次 WebView 过盾」：已持有说明盾已过，
+     * 直接重发网络请求即可，不必重复弹验证。
+     */
+    fun hasClearance(host: String): Boolean =
+        CloudflareDetector.hasClearance(cookieHeaderForHost(host))
+
     private const val TAG = "SourceCookieManager"
 }

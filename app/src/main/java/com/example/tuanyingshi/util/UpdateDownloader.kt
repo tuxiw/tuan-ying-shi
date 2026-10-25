@@ -33,6 +33,41 @@ object UpdateDownloader {
     private fun authority(context: Context) = "${context.packageName}.fileprovider"
 
     /**
+     * 返回 APK 下载目标文件（仅构造路径，不含存在性判断）。
+     * 统一存放于应用私有 Download 目录（[getExternalFilesDir]），避免依赖外部存储权限。
+     */
+    fun getDownloadFile(context: Context, fileName: String): File {
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: context.filesDir
+        dir.mkdirs()
+        return File(dir, fileName)
+    }
+
+    /**
+     * 查找本地已下载且完整的 APK（用于「已有安装包则跳过下载直接安装」）。
+     * 文件名包含版本号与渠道，因此不同版本 / 渠道互不冲突。
+     * @return 文件存在且大小 > 0 时返回该文件，否则返回 null。
+     */
+    fun findExistingApk(context: Context, fileName: String): File? {
+        val f = getDownloadFile(context, fileName)
+        return if (f.exists() && f.length() > 0) f else null
+    }
+
+    /**
+     * 清理历史更新包，避免反复下载导致存储堆积。
+     * 删除下载目录中所有匹配 `tuanyingshi_*.apk` 但文件名不等于 [keepFileName] 的文件。
+     */
+    fun cleanupOldApks(context: Context, keepFileName: String) {
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: context.filesDir
+        runCatching {
+            dir.listFiles { f ->
+                f.name.startsWith("tuanyingshi_") && f.name.endsWith(".apk") && f.name != keepFileName
+            }?.forEach { it.delete() }
+        }
+    }
+
+    /**
      * 下载 APK 到应用私有 Download 目录。
      * @return 下载完成的文件；失败（网络错误 / IO 异常）返回 null。
      */
@@ -42,11 +77,8 @@ object UpdateDownloader {
         fileName: String,
         onProgress: (Int) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
+        val out = getDownloadFile(context, fileName)
         runCatching {
-            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                ?: context.filesDir
-            dir.mkdirs()
-            val out = File(dir, fileName)
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
@@ -71,7 +103,10 @@ object UpdateDownloader {
             }
             onProgress(100)
             out
-        }.getOrNull()
+        }.getOrNull().also { result ->
+            // 下载失败时清理半截文件，避免下次被误判为「已存在可用安装包」
+            if (result == null && out.exists()) out.delete()
+        }
     }
 
     /**

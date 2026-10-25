@@ -5,6 +5,7 @@ import com.example.tuanyingshi.data.remote.parse.BackendAnimeSource
 import com.example.tuanyingshi.data.remote.parse.CycanimeSource
 import com.example.tuanyingshi.data.remote.parse.DandanplaySource
 import com.example.tuanyingshi.data.remote.parse.GirigiriSource
+import com.example.tuanyingshi.data.remote.parse.Hanime1Source
 import com.example.tuanyingshi.data.remote.parse.RuleBasedAnimeSource
 import com.example.tuanyingshi.data.remote.parse.RuleAggregateAnimeSource
 import com.example.tuanyingshi.data.remote.parse.SilisiliSource
@@ -27,6 +28,8 @@ enum class SourceMode {
     Girigiri,
     /** 规则/CSS 自定义数据源：由 [SourceRuleRepository] 中的 [SourceRule] 驱动。 */
     Rule,
+    /** Hanime1（hanime1.me）API 资源数据源：专用 API 客户端直连站点、专用解析，与 CSS 规则引擎无关。 */
+    Hanime1,
 }
 
 /**
@@ -62,11 +65,28 @@ object SourceHolder {
     /** 「弹弹play（API 源）」聚合源 id：选中后搜索/选集/播放走全部 CSS 规则源。 */
     const val EXTERNAL_CSS_SOURCE_ID = "external_css_all"
 
-    /** 内置资源源（始终存在，不可删除）。声明在 init 之前，避免初始化顺序导致 NPE。 */
+    /** 内置资源源（始终存在，不可删除）。声明在 init 之前，避免初始化顺序导致 NPE。
+     *
+     * 顺序即「选择数据」Tab 的默认展示顺序：次元城 > Girigiri > 嘶哩嘶哩 > Hanime1
+     * （弹弹play 聚合源在 [buildAll] 里插在嘶哩嘶哩之后、Hanime1 之前）。
+     * 该顺序同时是 [DEFAULT_SOURCE_ID]（嘶哩嘶哩）与兜底 `merged.first()` 的参照。 */
     private val BUILT_IN = listOf(
         ResourceSource("builtin_cycani", "次元城", SourceMode.Cycanime, "https://www.cycani.org", true),
+        // Girigiri：API 资源数据源（macCMS JSON 接口直连），成人内容以外的主力 API 源。
+        // ⚠️ Web 域是 ani.girigirilove.com（不是 anime.*）：接口域由本域派生成 m3u8.girigirilove.com，
+        // Origin/Referer 也用本域；早期误写 anime.girigirilove.com，靠 migrateLegacyBaseUrls 修正存量。
+        ResourceSource("builtin_girigiri", "Girigiri", SourceMode.Girigiri, "https://ani.girigirilove.com", true),
         ResourceSource("builtin_silisili", "嘶哩嘶哩", SourceMode.Silisili, "https://www.silisili.link", true),
-        ResourceSource("builtin_girigiri", "Girigiri", SourceMode.Girigiri, "https://anime.girigirilove.com", true),
+        // Hanime1：API 资源数据源（非 CSS 规则源），成人内容源，默认开启「NSFW 内容屏蔽」时不进入列表。
+        ResourceSource("builtin_hanime1", "Hanime1", SourceMode.Hanime1, "https://hanime1.me", true, nsfw = true),
+    )
+
+    /**
+     * 内置源历史遗留的**错误**默认域（id → 错值）：用于 [migrateLegacyBaseUrls] 修正存量存档。
+     * 新增条目仅当「默认域本身写错了、且已随版本发布出去」时才需要。
+     */
+    private val LEGACY_WRONG_BUILTIN_BASE_URLS = mapOf(
+        "builtin_girigiri" to "https://anime.girigirilove.com",
     )
 
     private lateinit var _currentSource: AnimeSource
@@ -89,7 +109,7 @@ object SourceHolder {
     var isSourceChanged = false
 
     init {
-        val merged = buildAll(decode(preferences.getString(KEY_RESOURCE_SOURCES, "") ?: ""))
+        val merged = buildAll(migrateLegacyBaseUrls(decode(preferences.getString(KEY_RESOURCE_SOURCES, "") ?: "")))
         _allSources.value = merged
         persist(merged)
 
@@ -101,6 +121,10 @@ object SourceHolder {
 
         // 规则源（SourceRuleRepository）变更时自动合并进资源源列表，新增/编辑/删除即时生效
         SourceRuleRepository.rules
+            .onEach { syncRules() }
+            .launchIn(GlobalScope)
+        // NSFW 屏蔽开关切换：成人规则源要即时从列表出现/消失，不必重启 App
+        ContentPrefs.nsfwBlock
             .onEach { syncRules() }
             .launchIn(GlobalScope)
     }
@@ -201,6 +225,7 @@ object SourceHolder {
             SourceMode.Silisili -> SilisiliSource
             SourceMode.Girigiri -> GirigiriSource
             SourceMode.Rule -> ruleBased(rs)
+            SourceMode.Hanime1 -> Hanime1Source
         }
     }
 
@@ -217,6 +242,7 @@ object SourceHolder {
             SourceMode.Silisili -> SilisiliSource
             SourceMode.Girigiri -> GirigiriSource
             SourceMode.Rule -> _currentSource
+            SourceMode.Hanime1 -> Hanime1Source
         }
     }
 
@@ -237,17 +263,26 @@ object SourceHolder {
         // 规则源不落库到本仓库，仅合并非规则源（避免与 SourceRuleRepository 重复）
         val storedNonRule = stored.filter { it.ruleId == null }
         val custom = storedNonRule.filter { !it.isBuiltIn }
-        val result = BUILT_IN.toMutableList()
-        // 用存储中的内置源覆盖默认（用户改过域名/名称的情况）
+        // 「NSFW 内容屏蔽」开启：成人源（内置 Hanime1 / 自建 nsfw 源）整体不进可选列表，
+        // 与 SourceRuleRepository.getVisible() 对规则源的过滤口径一致；
+        // 开关切换由 init 里的 ContentPrefs.nsfwBlock.onEach { syncRules() } 即时刷新，
+        // 若当前选中源被隐藏，syncRules 的兜底逻辑会自动回退到默认源。
+        val blockNsfw = ContentPrefs.isNsfwBlocked()
+        val result = BUILT_IN.filterNot { blockNsfw && it.nsfw }.toMutableList()
+        // 用存储中的内置源覆盖默认（用户改过域名/名称的情况）。
+        // ⚠️ nsfw 是内置源的代码级属性（成人源标记），旧版存档未持久化该字段、
+        // 解码后恒为 false，直接整条覆盖会把 Hanime1 的 NSFW 标记洗掉 ——
+        // 因此覆盖时始终保留 [BUILT_IN] 默认的 nsfw 值。
         storedNonRule.filter { it.isBuiltIn }.associateBy { it.id }.forEach { (id, rs) ->
             val idx = result.indexOfFirst { it.id == id }
-            if (idx >= 0) result[idx] = rs
+            if (idx >= 0) result[idx] = rs.copy(nsfw = result[idx].nsfw)
         }
-        result.addAll(custom)
-        // 把规则仓库中的全部规则派生为可选资源源（内置/自定义一并合并展示）
-        result.addAll(SourceRuleRepository.getAll().map { ruleToResourceSource(it) })
-        // 「弹弹play（API 源）」聚合源：内置虚拟源，元数据走弹弹play API，视频借全部 CSS 规则源
+        // 「弹弹play（API 源）」聚合源：内置虚拟源，元数据走弹弹play API，视频借全部 CSS 规则源。
+        // 展示顺序：次元城 > Girigiri > 嘶哩嘶哩 > 弹弹play > Hanime1（NSFW 屏蔽时 Hanime1 缺席），
+        // 故插在「最后一个非成人内置源」之后，而不是简单 append 到队尾。
+        val anchor = result.indexOfLast { !it.nsfw }
         result.add(
+            if (anchor >= 0) anchor + 1 else result.size,
             ResourceSource(
                 id = EXTERNAL_CSS_SOURCE_ID,
                 name = "弹弹play",
@@ -257,6 +292,9 @@ object SourceHolder {
                 aggregateCss = true,
             )
         )
+        result.addAll(custom.filterNot { blockNsfw && it.nsfw })
+        // 把规则仓库中的全部规则派生为可选资源源（内置/自定义一并合并展示）
+        result.addAll(SourceRuleRepository.getVisible().map { ruleToResourceSource(it) })
         return result
     }
 
@@ -272,6 +310,7 @@ object SourceHolder {
             subscriptionId = rule.subscriptionId,
             iconUrl = rule.iconUrl,
             engine = rule.engine,
+            nsfw = rule.nsfw,
         )
     }
 
@@ -280,7 +319,7 @@ object SourceHolder {
      * 若当前选中的源已不存在（如规则被删），自动回退到默认源。
      */
     fun syncRules() {
-        val merged = buildAll(decode(preferences.getString(KEY_RESOURCE_SOURCES, "") ?: ""))
+        val merged = buildAll(migrateLegacyBaseUrls(decode(preferences.getString(KEY_RESOURCE_SOURCES, "") ?: "")))
         _allSources.value = merged
         persist(merged)
         if (merged.none { it.id == _currentSourceId }) {
@@ -298,7 +337,10 @@ object SourceHolder {
     }
 
     private fun encode(list: List<ResourceSource>): String =
-        list.joinToString("\u001F") { "${it.id}\u0001${it.name}\u0001${it.type.name}\u0001${it.baseUrl}\u0001${if (it.isBuiltIn) 1 else 0}\u0001${it.ruleId ?: ""}\u0001${if (it.aggregateCss) 1 else 0}" }
+        list.joinToString("\u001F") {
+            "${it.id}\u0001${it.name}\u0001${it.type.name}\u0001${it.baseUrl}\u0001${if (it.isBuiltIn) 1 else 0}" +
+                "\u0001${it.ruleId ?: ""}\u0001${if (it.aggregateCss) 1 else 0}\u0001${if (it.nsfw) 1 else 0}"
+        }
 
     private fun decode(text: String): List<ResourceSource> {
         if (text.isBlank()) return emptyList()
@@ -314,8 +356,34 @@ object SourceHolder {
                     isBuiltIn = p[4] == "1",
                     ruleId = if (p.size >= 6) p[5].ifBlank { null } else null,
                     aggregateCss = if (p.size >= 7) p[6] == "1" else false,
+                    // 第 8 字段 nsfw 为后加：旧存档（7 字段）缺省时解码为 false，
+                    // 由 buildAll 的内置源覆盖逻辑用 BUILT_IN 默认值兜底修复。
+                    nsfw = if (p.size >= 8) p[7] == "1" else false,
                 )
             }.getOrNull()
+        }
+    }
+
+    /**
+     * 历史遗留错误默认域修正：内置源的默认域名改过后，旧安装的存档里仍持久化着**改之前**的错值
+     * （init 每次启动都会 persist，错值会被一直带着走；buildAll 的「存储覆盖内置源」又优先用存档值，
+     * 光改 [BUILT_IN] 对存量无效）。
+     *
+     * 当前仅一例：Girigiri 默认域 `anime.girigirilove.com`（错）→ `ani.girigirilove.com`（对，
+     * 与 GirigiriSource.DEFAULT_DOMAIN / GirigiriApi.DEFAULT_WEB_URL 一致）。
+     * 只修「存档值 == 已知错值」的内置源，用户显式改过域名的（镜像等）不受影响。
+     */
+    private fun migrateLegacyBaseUrls(stored: List<ResourceSource>): List<ResourceSource> {
+        if (stored.isEmpty()) return stored
+        val fixes = BUILT_IN.mapNotNull { def ->
+            val legacy = LEGACY_WRONG_BUILTIN_BASE_URLS[def.id] ?: return@mapNotNull null
+            def.id to legacy
+        }.toMap()
+        if (fixes.isEmpty()) return stored
+        if (stored.none { fixes[it.id] == it.baseUrl }) return stored
+        return stored.map { rs ->
+            val def = BUILT_IN.firstOrNull { it.id == rs.id }
+            if (def != null && fixes[rs.id] == rs.baseUrl) rs.copy(baseUrl = def.baseUrl) else rs
         }
     }
 
@@ -326,6 +394,7 @@ object SourceHolder {
             SourceMode.Cycanime -> "builtin_cycani"
             SourceMode.Silisili -> "builtin_silisili"
             SourceMode.Girigiri -> "builtin_girigiri"
+            SourceMode.Hanime1 -> "builtin_hanime1"
             SourceMode.Rule -> DEFAULT_SOURCE_ID
         }
     }

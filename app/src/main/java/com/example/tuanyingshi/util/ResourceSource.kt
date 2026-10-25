@@ -43,6 +43,11 @@ data class ResourceSource(
      * [RuleEngineKind.Css] 显示「外部资源」；非规则源恒为 null。
      */
     val engine: RuleEngineKind? = null,
+    /**
+     * 是否为成人站点源（取自 [com.example.tuanyingshi.util.source_rule.SourceRule.nsfw]）。
+     * 「NSFW 内容屏蔽」开启时这类源根本不会进入本列表，故出现在这里就一定需要打 NSFW 标签。
+     */
+    val nsfw: Boolean = false,
 )
 
 /** 解析器类型 → 中文标签（用于设置页下拉与展示）。 */
@@ -51,4 +56,5 @@ fun SourceMode.label(): String = when (this) {
     SourceMode.Silisili -> "嘶哩嘶哩"
     SourceMode.Girigiri -> "Girigiri"
     SourceMode.Rule -> "CSS源"
+    SourceMode.Hanime1 -> "Hanime1"
 }

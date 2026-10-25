@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import com.example.tuanyingshi.ui.components.adaptiveMinCardWidth
+import com.example.tuanyingshi.util.COLUMNS_AUTO_MAX
+import com.example.tuanyingshi.util.COLUMNS_DEFAULT
+import com.example.tuanyingshi.util.sanitizeColumns
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -70,6 +73,8 @@ import androidx.compose.material3.Icon
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.data.remote.backend.FilterOptionsVO
+import com.example.tuanyingshi.data.remote.girigiri.GirigiriApi
+import com.example.tuanyingshi.data.remote.girigiri.GirigiriFilterOptions
 import androidx.compose.runtime.snapshotFlow
 
 // ── 筛选数据 ──────────────────────────────────────────────
@@ -127,8 +132,9 @@ private fun zoneToId(zone: String): Int = when (zone) {
  * 4. 排序
  *
  * 数据源策略：
- * - **后端模式 / 次元城 / 专属后端**：走真实在线筛选接口（FilterViewModel 分页），支持下滑加载更多；
- *   后端模式下筛选选项（题材/年份/地区/状态/排序）由后端 `/filter/options` 下发，与后端保持一致。
+ * - **后端模式 / 次元城 / Girigiri / 专属后端**：走真实在线筛选接口（FilterViewModel 分页），支持下滑加载更多；
+ *   后端模式下筛选选项（题材/年份/地区/状态/排序）由后端 `/filter/options` 下发，与后端保持一致；
+ *   Girigiri 模式下筛选项（题材/年份）由站点 API 下发（含"2000至90年代"等非数字年份）。
  * - **其它本地源**：在线筛选接口不可用，降级为本地内存过滤（复用首页已加载的 categoryMap / allAnime）。
  */
 @Composable
@@ -137,12 +143,16 @@ fun CategoryBrowse(
     categoryMap: Map<String, List<Anime>>,
     allAnime: List<Anime>,
     navController: NavController,
+    /** 列表列数：来自「布局设置」，2-6 列默认 3 列。 */
+    columns: Int = COLUMNS_DEFAULT,
     modifier: Modifier = Modifier,
 ) {
     val isOnlineFilter = SourceHolder.currentSourceMode == SourceMode.Cycanime ||
+        SourceHolder.currentSourceMode == SourceMode.Girigiri ||
         BackendPrefs.isBackendMode() ||
         DedicatedBackendPrefs.isEnabled()
     val isBackend = BackendPrefs.isBackendMode()
+    val isGirigiri = SourceHolder.currentSourceMode == SourceMode.Girigiri
 
     // 筛选持久策略：filterResetOnExit=true（默认）时跨导航保留筛选，仅在退出/切源时重置；
     // 否则每次进入分类页都重置为默认（局部 remember 行为）。
@@ -160,14 +170,32 @@ fun CategoryBrowse(
         }
     }
 
-    val genreOptions: List<FilterOption> = remember(backendOptions) {
-        backendOptions?.genres?.takeIf { it.isNotEmpty() }
-            ?.map { FilterOption(it.label ?: it.value ?: "全部", it.value ?: "") }
+    // Girigiri 筛选项（API 源：题材/年份由站点接口下发；拉取失败回退本地硬编码列表）
+    var girigiriOptions by remember { mutableStateOf<GirigiriFilterOptions?>(null) }
+    LaunchedEffect(isGirigiri) {
+        girigiriOptions = if (isGirigiri) {
+            try {
+                GirigiriApi.filterOptions()
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+    }
+
+    val genreOptions: List<FilterOption> = remember(backendOptions, girigiriOptions) {
+        girigiriOptions?.classes?.takeIf { it.isNotEmpty() }
+            ?.map { FilterOption(it, it) }
+            ?: backendOptions?.genres?.takeIf { it.isNotEmpty() }
+                ?.map { FilterOption(it.label ?: it.value ?: "全部", it.value ?: "") }
             ?: genreOptionsFallback
     }
-    val yearOptions: List<FilterOption> = remember(backendOptions) {
-        backendOptions?.years?.takeIf { it.isNotEmpty() }
-            ?.map { FilterOption(it.label ?: it.value ?: "", it.value ?: "") }
+    val yearOptions: List<FilterOption> = remember(backendOptions, girigiriOptions) {
+        girigiriOptions?.years?.takeIf { it.isNotEmpty() }
+            ?.map { FilterOption(it, it) }
+            ?: backendOptions?.years?.takeIf { it.isNotEmpty() }
+                ?.map { FilterOption(it.label ?: it.value ?: "", it.value ?: "") }
             ?: yearOptionsFallback
     }
     val sortOptions: List<FilterOption> = remember(backendOptions) {
@@ -295,6 +323,7 @@ fun CategoryBrowse(
                     sort = selectedSort,
                     region = selectedRegion,
                     status = selectedStatus,
+                    columns = columns,
                     navController = navController,
                 )
             } else {
@@ -305,6 +334,7 @@ fun CategoryBrowse(
                     genre = selectedGenre,
                     year = selectedYear,
                     sort = selectedSort,
+                    columns = columns,
                     navController = navController,
                 )
             }
@@ -323,6 +353,7 @@ private fun CategoryBrowseRemote(
     sort: String,
     region: String,
     status: String,
+    columns: Int,
     navController: NavController,
 ) {
     val viewModel: FilterViewModel = hiltViewModel(key = zone)
@@ -350,7 +381,8 @@ private fun CategoryBrowseRemote(
         currentSignature = newSig
         viewModel.setFilters(
             tag = genre.ifBlank { null },
-            year = year.ifBlank { null }?.toIntOrNull(),
+            // year 透传字符串：Girigiri 年份含"2000至90年代"等非数字值
+            year = year.ifBlank { null },
             orderBy = sort.ifBlank { null },
             region = region.ifBlank { null },
             status = status.ifBlank { null },
@@ -399,7 +431,7 @@ private fun CategoryBrowseRemote(
         else -> {
             LazyVerticalGrid(
                 state = gridState,
-                columns = GridCells.Adaptive(minSize = adaptiveMinCardWidth),
+                columns = GridCells.Fixed(sanitizeColumns(columns, COLUMNS_AUTO_MAX)),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -452,6 +484,7 @@ private fun CategoryBrowseLocal(
     genre: String,
     year: String,
     sort: String,
+    columns: Int,
     navController: NavController,
 ) {
     val baseList = remember(zone, categoryMap, allAnime) {
@@ -519,7 +552,7 @@ private fun CategoryBrowseLocal(
     } else {
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Adaptive(minSize = adaptiveMinCardWidth),
+            columns = GridCells.Fixed(sanitizeColumns(columns, COLUMNS_AUTO_MAX)),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),

@@ -95,7 +95,7 @@ class AnimeApiImpl @Inject constructor() : AnimeApi {
             singleSourceChunkFlow(source, query, displayName)
         }
         val expectedNames: List<String> = if (source is RuleAggregateAnimeSource) {
-            SourceRuleRepository.getAll()
+            SourceRuleRepository.getVisible()
                 .filter { RuleExecutor.supportsCurrentPlayer(it) }
                 .map { it.name.ifBlank { it.search.baseUrl } }
         } else {
@@ -137,7 +137,7 @@ class AnimeApiImpl @Inject constructor() : AnimeApi {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,

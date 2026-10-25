@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -49,6 +50,7 @@ import com.example.tuanyingshi.ui.player.LocalPlayerScreen
 import com.example.tuanyingshi.ui.ranking.RankingScreen
 import com.example.tuanyingshi.ui.settings.SettingsScreen
 import com.example.tuanyingshi.ui.settings.GeneralSettingsScreen
+import com.example.tuanyingshi.ui.settings.LayoutSettingsScreen
 import com.example.tuanyingshi.ui.settings.DownloadSettingsScreen
 import com.example.tuanyingshi.ui.settings.PlaybackSettingsScreen
 import com.example.tuanyingshi.ui.settings.DanmakuSettingsScreen
@@ -73,8 +75,12 @@ import com.example.tuanyingshi.ui.history.HistoryScreen
 import com.example.tuanyingshi.ui.download.DownloadScreen
 import com.example.tuanyingshi.ui.download.DownloadGroupScreen
 import com.example.tuanyingshi.ui.account.LoginScreen
+import com.example.tuanyingshi.ui.cycani.CycaniLoginPage
+import com.example.tuanyingshi.ui.cycani.CycaniRegisterPage
 import com.example.tuanyingshi.ui.account.QrScanScreen
 import com.example.tuanyingshi.ui.account.FavoritesScreen
+import com.example.tuanyingshi.ui.account.LocalFavoritesScreen
+import com.example.tuanyingshi.ui.account.LocalRatingsScreen
 import com.example.tuanyingshi.ui.account.MarksScreen
 import com.example.tuanyingshi.ui.account.MyRatingsScreen
 import com.example.tuanyingshi.ui.account.FeedbackScreen
@@ -122,9 +128,13 @@ fun AppNavigation() {
     val activity = context.findActivity()
     val exitConfirm by ContentPrefs.exitConfirm.collectAsStateWithLifecycle()
     var lastBackPressTime by remember { mutableStateOf(0L) }
+    // 首启权限说明弹窗状态（声明提前至此，供下方返回键门控使用；弹出逻辑见后面的 LaunchedEffect）
+    var showPermissionIntro by remember { mutableStateOf(false) }
 
     val atRoot = currentRoute == Screen.Home.route
-    BackHandler(enabled = atRoot) {
+    // 权限说明弹窗打开期间一并禁用根返回逻辑：该弹窗禁止返回键关闭（见 DialogProperties），
+    // 而关闭被禁用的返回事件会穿透到根 BackHandler，此处屏蔽避免「弹窗开着却弹退出提示」
+    BackHandler(enabled = atRoot && !showPermissionIntro) {
         if (!exitConfirm) {
             CategoryFilterState.reset()
             activity?.finish()
@@ -141,11 +151,13 @@ fun AppNavigation() {
     }
 
     // 首次进入 App：展示「免费说明 / 官方下载地址」公告，需阅读到底才能关闭。
+    // 首启固定顺序：欢迎公告 → 新手引导 → 权限说明。公告不再等引导看完——未看引导时它以弹窗
+    // 形式叠在引导页之上先出（引导是整页不是弹窗，不存在两个弹窗叠在一起的问题），
+    // 用户确认关闭后再继续引导。
+    // 后端模式下由后端公告接管，不再弹本地「免费说明」公告
     var showAnnounce by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        // 若尚未看过新手引导，则先展示引导（引导结束/下次启动再弹公告），避免两者在首屏叠在一起。
-        // 后端模式下由后端公告接管，不再弹本地「免费说明」公告
-        if (!BackendPrefs.isBackendMode() && !AnnouncePrefs.hasShown() && OnboardingPrefs.hasShown()) {
+        if (!BackendPrefs.isBackendMode() && !AnnouncePrefs.hasShown()) {
             showAnnounce = true
         }
     }
@@ -154,8 +166,8 @@ fun AppNavigation() {
     // 受「后端公告推送」开关约束：关闭后不再自动弹出后端公告。
     var backendAnnounce by remember { mutableStateOf<AnnouncementVO?>(null) }
     LaunchedEffect(Unit) {
-        // 与本地公告一致：先看新手引导，避免首屏两个弹窗叠在一起
-        if (!BackendPrefs.isBackendMode() || !OnboardingPrefs.hasShown() || !BackendPushPrefs.isAnnouncementPushEnabled()) return@LaunchedEffect
+        // 与本地公告一致：先出公告再引导（未看引导时公告叠在引导页上，确认后继续引导）
+        if (!BackendPrefs.isBackendMode() || !BackendPushPrefs.isAnnouncementPushEnabled()) return@LaunchedEffect
         val ann = runCatching { BackendClient.api.announcementPopup() }
             .getOrNull()
             ?.takeIf { it.ok }
@@ -165,13 +177,12 @@ fun AppNavigation() {
         }
     }
 
-    // 首次启动（已看过新手引导且本版本尚未展示过权限说明）：弹出「权限说明」，
-    // 介绍存储 / 通知权限用途并一次性申请；避免「用到才申请」导致下载 / 本地播放 / 下载通知异常。
-    // 相机权限（扫码登录）保持按需申请，不在此处请求。
+    // 首启流程最后一步（固定顺序：欢迎公告 → 新手引导 → 权限说明）：引导看完且本标记尚未
+    // 置位时弹出「权限说明」，介绍存储 / 通知权限用途并一次性申请；避免「用到才申请」导致
+    // 下载 / 本地播放 / 下载通知异常。相机权限（扫码登录）保持按需申请，不在此处请求。
     val onboardingShown by OnboardingPrefs.shown.collectAsStateWithLifecycle()
-    var showPermissionIntro by remember { mutableStateOf(false) }
     LaunchedEffect(onboardingShown) {
-        // 不与本地公告同时弹出：若本地「免费说明」公告正在展示，则等其关闭后再弹权限说明
+        // 不与公告同时弹出：若公告正在展示，则等其关闭后再弹权限说明（关闭链见下方 onDismiss）
         if (onboardingShown && !PermissionPrefs.introShown() && !showAnnounce) {
             showPermissionIntro = true
         }
@@ -330,6 +341,7 @@ fun AppNavigation() {
             ) { MineScreen(navController) }
             composable(Screen.Settings.route) { SettingsScreen(navController) }
             composable(Screen.General.route) { GeneralSettingsScreen(navController) }
+            composable(Screen.LayoutSettings.route) { LayoutSettingsScreen(navController) }
             composable(Screen.DownloadSettings.route) { DownloadSettingsScreen(navController) }
             composable(Screen.PlaybackSettings.route) { PlaybackSettingsScreen(navController) }
             composable(Screen.DanmakuSettings.route) { DanmakuSettingsScreen(navController) }
@@ -383,10 +395,37 @@ fun AppNavigation() {
             composable(Screen.History.route) { HistoryScreen(navController) }
 
             composable(Screen.Login.route) { LoginScreen(navController) }
+            composable(
+                route = Screen.CycaniLogin.route,
+                arguments = listOf(
+                    navArgument("username") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("pendingSourceId") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { backStack ->
+                CycaniLoginPage(
+                    navController = navController,
+                    initialUsername = android.net.Uri.decode(backStack.arguments?.getString("username").orEmpty()),
+                    pendingSourceId = android.net.Uri.decode(backStack.arguments?.getString("pendingSourceId").orEmpty()),
+                )
+            }
+            composable(
+                route = Screen.CycaniRegister.route,
+                arguments = listOf(
+                    navArgument("email") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { backStack ->
+                CycaniRegisterPage(
+                    navController = navController,
+                    initialEmail = android.net.Uri.decode(backStack.arguments?.getString("email").orEmpty()),
+                )
+            }
             composable(Screen.QrScan.route) { QrScanScreen(navController) }
             composable(Screen.Favorites.route) { FavoritesScreen(navController) }
             composable(Screen.Marks.route) { MarksScreen(navController) }
             composable(Screen.MyRatings.route) { MyRatingsScreen(navController) }
+            // 纯本地数据源：我的收藏 / 我的评分（不依赖后端登录）
+            composable(Screen.LocalFavorites.route) { LocalFavoritesScreen(navController) }
+            composable(Screen.LocalRatings.route) { LocalRatingsScreen(navController) }
             composable(Screen.Feedback.route) { FeedbackScreen(navController) }
             composable(Screen.AccountManage.route) { AccountManageScreen(navController) }
 
@@ -416,11 +455,14 @@ fun AppNavigation() {
                 arguments = listOf(
                     navArgument("detailUrl") { type = NavType.StringType },
                     navArgument("episodeUrl") { type = NavType.StringType },
+                    navArgument("sourceId") { type = NavType.StringType; defaultValue = "" },
                 ),
             ) { backStack ->
                 val detailUrl = android.net.Uri.decode(backStack.arguments?.getString("detailUrl").orEmpty())
                 val episodeUrl = android.net.Uri.decode(backStack.arguments?.getString("episodeUrl").orEmpty())
-                PlayerScreen(navController, detailUrl, episodeUrl)
+                com.example.tuanyingshi.ui.theme.PlayerTheme {
+                    PlayerScreen(navController, detailUrl, episodeUrl)
+                }
             }
 
             composable(
@@ -458,7 +500,9 @@ fun AppNavigation() {
             ) { backStack ->
                 val uri = android.net.Uri.decode(backStack.arguments?.getString("uri").orEmpty())
                 val title = backStack.arguments?.getString("title").orEmpty().ifBlank { null }
-                ExternalPlayerScreen(navController, uri, title)
+                com.example.tuanyingshi.ui.theme.PlayerTheme {
+                    ExternalPlayerScreen(navController, uri, title)
+                }
             }
         }
         }
@@ -501,10 +545,13 @@ fun AppNavigation() {
     if (showPermissionIntro) {
         AlertDialog(
             onDismissRequest = {
-                // 点击空白处 / 返回键关闭也视为「本次不再提示」，避免反复打扰
-                PermissionPrefs.markIntroShown()
-                showPermissionIntro = false
+                // 不会被执行：下方 properties 已禁止点空白处 / 返回键关闭。
+                // 首启三步的最后一步必须由用户主动选择「授权」或「暂不」，避免误触跳过
             },
+            properties = DialogProperties(
+                dismissOnClickOutside = false,
+                dismissOnBackPress = false,
+            ),
             title = { Text("权限说明") },
             text = {
                 Text(

@@ -25,6 +25,46 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 
 /**
+ * 「内容已屏蔽」内联提示（不自带顶栏）：用于已有自己顶栏的页面
+ * （Hanime1 首页 / 搜索 / 详情内容区 / 排行榜空态），直接嵌在内容区展示。
+ */
+@Composable
+fun NsfwBlockedHint(
+    modifier: Modifier = Modifier,
+    title: String = "内容已屏蔽",
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Block,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth(0.28f)
+                .height(64.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "NSFW 内容屏蔽已开启。关闭「设置 › 通用 › NSFW 内容屏蔽」后可正常查看。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+    }
+}
+
+/**
  * 「内容已屏蔽」占位页：当 NSFW 内容屏蔽开启且当前番剧命中 NSFW 标签时，
  * 在详情页 / 播放页直接展示此页，不加载封面以外的任何内容、不解析、不播放。
  */
@@ -49,34 +89,6 @@ fun NsfwBlockedScaffold(
             }
         },
     ) { inner ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(inner),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Block,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth(0.28f)
-                    .height(64.dp),
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "该内容已被屏蔽",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "NSFW 内容屏蔽已开启。关闭「设置 › 通用 › NSFW 内容屏蔽」后可正常查看。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
-        }
+        NsfwBlockedHint(modifier = Modifier.padding(inner), title = title)
     }
 }

@@ -83,7 +83,7 @@ class AnimeRepositoryImpl @Inject constructor(
     override suspend fun getFilterPage(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,

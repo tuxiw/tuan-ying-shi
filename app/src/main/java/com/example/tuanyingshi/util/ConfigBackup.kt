@@ -17,9 +17,12 @@ import java.io.Writer
  * 整个 App 只有唯一一个 SharedPreferences 文件（"tuanying_prefs"），所有偏好 / 仓库类 /
  * 登录态都读写它。因此“用户配置”即该文件的全量键值。
  *
- * 支持「选择性备份」：按 [BackupScope] 将键值分为四类——个性化与播放设置、通知与提醒、
- * 数据源与订阅、账号会话。导出时可只导出选中的分类；导入时只写回文件里存在的键
- * （合并语义，不清除未包含的键）。
+ * 支持「选择性备份」：按 [BackupScope] 将键值分为六类——个性化与播放设置、通知与提醒、
+ * 数据源与弹幕源、网络代理、后端模式、账号会话。导出时可只导出选中的分类；导入时只写回
+ * 文件里存在的键（合并语义，不清除未包含的键）。
+ *
+ * 机器身份类键（见 [EXCLUDED_KEYS]：device_id / device_last_report_at）永不导出 / 导入，
+ * 避免恢复备份顶掉本机设备标识。
  *
  * 导入前可用 [parseMeta] 校验文件合法性（app 标识 + 版本），并在确认弹窗中展示范围与时间。
  *
@@ -34,6 +37,10 @@ object ConfigBackup {
      * - v2：新增 scopes 声明（个性化 / 数据源与订阅 / 账号会话）。
      * - v3：拆出「通知与提醒」分类（含下载通知、离线模式提示、离线模式顶部提醒）。
      *   低版本备份仍可导入：缺失的通知键会保持本机默认值（三项默认开启）。
+     *
+     * v3 之后分类继续细化（「数据源与弹幕源 / 网络代理 / 后端模式」相继从「个性化与播放设置」
+     * 拆出），但文件格式未变、版本号未升：导入按文件内实际键全量写回（合并语义），未知
+     * scope id 只影响展示、不影响恢复内容，因此新旧版本之间可互导。
      */
     const val CURRENT_EXPORT_VERSION = 3
     private const val APP_TAG = "tuanyingshi"
@@ -43,7 +50,9 @@ object ConfigBackup {
     enum class BackupScope(val id: String, val label: String) {
         PERSONALIZATION("personalization", "个性化与播放设置"),
         NOTIFICATION("notification", "通知与提醒"),
-        DATA_SOURCES("data_sources", "数据源与订阅"),
+        DATA_SOURCES("data_sources", "数据源与弹幕源"),
+        NETWORK("network", "网络代理"),
+        BACKEND("backend", "后端模式"),
         ACCOUNT("account", "账号会话"),
     }
 
@@ -63,30 +72,62 @@ object ConfigBackup {
     )
 
     /**
-     * 判定某个 prefs key 属于哪个分类。
-     * - 账号会话：`cycani_*` 系列（token / 用户名 / 邮箱 / cookies）。
-     * - 数据源与订阅：数据源规则、订阅列表、当前选中数据源。
+     * 永不导出 / 导入的键：本机身份与运行时状态。
+     * - `device_id`：安装级 UUID（上报后端「登录设备」用），恢复备份会顶掉本机身份；
+     * - `device_last_report_at`：设备信息上报节流时间戳，属本机运行时状态。
+     * 旧备份中若含这些键，导入时同样跳过，保证本机标识不被覆盖。
+     */
+    private val EXCLUDED_KEYS = setOf("device_id", "device_last_report_at")
+
+    /** 该键是否参与备份（导出 / 导入）。 */
+    private fun isBackupKey(key: String): Boolean = key !in EXCLUDED_KEYS
+
+    /**
+     * 判定某个 prefs key 属于哪个分类（路由表）：
+     * - 账号会话：`cycani_*` 系列（次元城 token / 用户名 / 邮箱 / cookies / 用户资料）。
+     * - 后端模式：`backend_*`（后端开关 / 地址 / 令牌 / 账号资料）、`dedicated_backend_*`
+     *   （专属后端）、`backend_push_*`（更新 / 公告推送开关）、`announce_backend_read_ids`
+     *   （后端公告已读记录）。
+     * - 网络代理：`proxy_*` 系列（代理开关 / 类型 / 地址端口 / 账号密码）。
+     * - 数据源与弹幕源：`source_rules_json` / `source_subscriptions_json` / `resource_sources`
+     *   （规则、订阅、全部资源源）、`source_id`（当前选中源）、`source_mode` / `source_domain`
+     *   （源模式与域名）、`smart_source_*`（智能选源）、`dandanplay_*`（弹弹 play 接口配置）、
+     *   `danmaku_enabled`（弹幕拉取总开关），以及键名含 `subscription` / `source_rule` 的键。
      * - 通知与提醒：`notif_*` 前缀（离线模式提示 / 顶部提醒等）与下载进度通知开关。
-     * - 其余（主题、代理、弹幕、播放、下载、更新、开屏、调试等）= 个性化与播放设置。
+     * - 其余（主题、界面、播放、下载、更新、开屏、弹幕显示、同步配置、调试等）
+     *   = 个性化与播放设置。
      *
      * 注意：新增通知类偏好请统一使用 `notif_` 前缀，即可自动归入本分类，无需改动此处。
      */
     fun categoryOf(key: String): BackupScope = when {
         key.startsWith("cycani_") -> BackupScope.ACCOUNT
+        key.startsWith("backend_") ||
+            key.startsWith("dedicated_backend_") ||
+            key == "announce_backend_read_ids" -> BackupScope.BACKEND
+        key.startsWith("proxy_") -> BackupScope.NETWORK
         key == "source_rules_json" ||
-        key == "source_subscriptions_json" ||
-        key == "source_id" ||
-        key.contains("subscription") ||
-        key.contains("source_rule") -> BackupScope.DATA_SOURCES
+            key == "source_subscriptions_json" ||
+            key == "resource_sources" ||
+            key == "source_id" ||
+            key == "source_mode" ||
+            key == "source_domain" ||
+            key.startsWith("smart_source_") ||
+            key.startsWith("dandanplay_") ||
+            key == "danmaku_enabled" ||
+            key.contains("subscription") ||
+            key.contains("source_rule") -> BackupScope.DATA_SOURCES
         key.startsWith("notif_") ||
-        key == "download_notification_enabled" -> BackupScope.NOTIFICATION
+            key == "download_notification_enabled" -> BackupScope.NOTIFICATION
         else -> BackupScope.PERSONALIZATION
     }
 
-    /** 统计各分类当前键数量，用于导出前展示。 */
+    /** 统计各分类当前键数量，用于导出前展示（不含机器身份类键）。 */
     fun scopeCounts(prefs: SharedPreferences): Map<BackupScope, Int> {
         val map = BackupScope.entries.associateWith { 0 }.toMutableMap()
-        prefs.all.keys.forEach { key -> map[categoryOf(key)] = map.getValue(categoryOf(key)) + 1 }
+        prefs.all.keys.forEach { key ->
+            if (!isBackupKey(key)) return@forEach
+            map[categoryOf(key)] = map.getValue(categoryOf(key)) + 1
+        }
         return map
     }
 
@@ -112,6 +153,7 @@ object ConfigBackup {
 
         val prefsObj = JSONObject()
         for ((key, value) in prefs.all) {
+            if (!isBackupKey(key)) continue // 机器身份类键不导出
             if (categoryOf(key) !in scopes) continue
             prefsObj.put(key, encodeValue(value))
         }
@@ -166,7 +208,8 @@ object ConfigBackup {
 
     /**
      * 从 [text] 读取导出内容，校验后写回 [prefs] 并提交（apply）。
-     * 仅写回文件里存在的键（合并语义），不清除未包含的分类。
+     * 仅写回文件里存在的键（合并语义），不清除未包含的分类；机器身份类键
+     * （[EXCLUDED_KEYS]）始终跳过，保留本机设备标识。
      * @return 写入的键数量与元信息。
      * @throws Exception 文件格式错误、校验失败等。
      */
@@ -179,6 +222,7 @@ object ConfigBackup {
         var count = 0
         while (keys.hasNext()) {
             val key = keys.next()
+            if (!isBackupKey(key)) continue // 机器身份类键不恢复
             val item = prefsObj.getJSONObject(key)
             val type = item.getString("t")
             when (type) {

@@ -117,10 +117,9 @@ fun AboutScreen(navController: NavController) {
 @Composable
 fun AboutSettingsContent() {
     val context = LocalContext.current
-    // 连点版本号开启开发者选项：默认隐藏，需连点达到阈值
-    var tapCount by remember { mutableStateOf(0) }
+    // 连点版本号开启开发者选项：默认隐藏，需连点达到阈值。
+    // 计数在 DebugPrefs 落盘（切页 / 旋转 / 重启都不丢），避免「点了没反应、入口消失」。
     val debugModeEnabled by DebugPrefs.debugModeEnabled.collectAsStateWithLifecycle()
-    val developerOptionsThreshold = 7
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -170,35 +169,30 @@ fun AboutSettingsContent() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
+                // 版本号文字很细，扩大可点区域，避免用户点不到就以为入口没了
+                .clip(RoundedCornerShape(10.dp))
                 .clickable {
-                    if (debugModeEnabled) {
-                        // 已开启：仅给出提示，不再累加
-                        android.widget.Toast.makeText(
-                            context,
-                            "开发者选项已开启",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                        return@clickable
+                    // 已开启时不走计数逻辑，直接给出明确提示（避免误显示「再点击 0 次」）
+                    val alreadyEnabled = DebugPrefs.isDebugModeEnabled()
+                    val unlocked = !alreadyEnabled && DebugPrefs.registerVersionTap()
+                    val message = when {
+                        alreadyEnabled || unlocked -> "开发者选项已开启，入口：设置 → 其他 → 调试模式"
+                        else -> "再点击 ${DebugPrefs.versionTapsRemaining()} 次开启开发者选项"
                     }
-                    tapCount++
-                    val remain = developerOptionsThreshold - tapCount
-                    if (remain > 0) {
-                        android.widget.Toast.makeText(
-                            context,
-                            "再点击 $remain 次开启开发者选项",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    } else {
-                        DebugPrefs.setDebugModeEnabled(true)
-                        tapCount = 0
-                        android.widget.Toast.makeText(
-                            context,
-                            "开发者选项已开启",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                },
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+                .padding(horizontal = 18.dp, vertical = 14.dp),
         )
+
+        // 已解锁后给出常驻可见标识，避免用户不知道入口在哪
+        if (debugModeEnabled) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "开发者选项已开启 · 设置 → 其他 → 调试模式",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
 
         // 后端公告（仅后端模式展示）
         Spacer(Modifier.height(28.dp))
@@ -229,31 +223,25 @@ private data class ChangeLog(
 )
 
 /**
- * 更新日志（由新到旧）。最新版本号会随 BuildConfig.VERSION_NAME 自动同步，
- * 历史版本号以文本固定保留，便于用户查看累积变更。
+ * 更新日志（只保留当前版本的记录，版本号随 BuildConfig.VERSION_NAME 自动同步）。
+ * 新增版本时替换整段 [changeLogs]，不再堆叠历史版本。
  */
 private val changeLogs = listOf(
     ChangeLog(
         version = BuildConfig.VERSION_NAME,
         changes = listOf(
-            "后端资源模式：筛选页选项与后端一致，支持加载全部番剧与下拉加载更多",
-            "后端资源模式：实现「我的追番」（在看 / 看过 / 抛弃）",
-            "设置页新手引导优化，降低误触概率",
-            "权限改为首次启动介绍用途并一次性申请，修复使用时才申请导致功能异常",
-            "后端弹幕改为按番剧剧集分别存储，修复不同集数弹幕显示一致",
-            "筛选页展开/收起状态与滚动位置现在会被记住",
-            "扫码页面 UI 改为内嵌自绘扫码界面",
-            "首页新增左侧弹出「快捷设置」抽屉（点击头像唤出）",
-            "后端模式下可自主选择是否接收更新推送与公告推送",
-        ),
-    ),
-    ChangeLog(
-        version = "0.6.0",
-        changes = listOf(
-            "本次更新后APP端+后端代码开源同时会减少更新频率，欢迎二开",
-            "修复滑动播放进度条弹幕渲染问题",
-            "新增新手引导 (实验)",
-            "新增专属APP后端模式 (实验) - 默认未配置",
+            "重新设计「我的」页面并做平板适配：资料卡 / 快捷入口 / 功能网格全新排版，平板双栏展示",
+            "更新适配全新的 girigiri API 资源：接口直连，首页 / 详情 / 搜索 / 排行榜全面接入",
+            "新增适配全新的 Hanime1 NSFW 资源：内置 API 客户端，支持评论与收藏，自动处理 Cloudflare 验证",
+            "修复新增 / 修改 CSS、XPATH 资源时的异常问题",
+            "修复新手引导流程中公告弹窗被跳过、顺序错乱等问题",
+            "更新代理模式与逻辑：不使用代理时清空全部代理状态；系统代理仅保留系统代理；自定义代理仅单一协议生效",
+            "修复备份和恢复时的设置分类不一致问题",
+            "修复数据源订阅无法自动 1 小时更新的问题",
+            "修复调试模式在手机端 UI 无法查看入口的问题",
+            "修复后端模式下软件更新页的更新通道仍显示官方地址的问题",
+            "修复设置页面进入二级菜单返回后停回默认「通用」分区的问题",
+            "修复已知问题，提升稳定性与播放体验",
         ),
     ),
 )

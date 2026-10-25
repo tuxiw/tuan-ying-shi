@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.LabelOff
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.example.tuanyingshi.ui.components.effectiveDetailColumns
+import com.example.tuanyingshi.ui.components.effectiveHomeColumns
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.ui.settings.SwitchRow
 import com.example.tuanyingshi.util.UiPrefs
@@ -99,9 +102,22 @@ fun PersonalizationSettingsContent(navController: NavController) {
     )
     PersonalizationItem(
         icon = Icons.Filled.Palette,
-        title = "主题配色",
-        subtitle = "内置暗色 / 亮色，或自定义强调色",
+        title = "主题与色彩",
+        subtitle = "深浅色模式、动态色彩与强调色调色板",
         onClick = { navController.navigate(Screen.Theme.route) },
+    )
+    // 列表布局：首页 / 详情页列表每行列数。默认按屏幕自适应，手动档则显示固定列数
+    val homeAuto by UiPrefs.homeColumnsAuto.collectAsStateWithLifecycle()
+    val detailAuto by UiPrefs.detailColumnsAuto.collectAsStateWithLifecycle()
+    val homeColumns = effectiveHomeColumns()
+    val detailColumns = effectiveDetailColumns()
+    val homeLabel = if (homeAuto) "首页 自适应 $homeColumns 列" else "首页 $homeColumns 列"
+    val detailLabel = if (detailAuto) "详情页 自适应 $detailColumns 列" else "详情页 $detailColumns 列"
+    PersonalizationItem(
+        icon = Icons.Filled.GridOn,
+        title = "列表布局",
+        subtitle = "$homeLabel · $detailLabel",
+        onClick = { navController.navigate(Screen.LayoutSettings.route) },
     )
 }
 

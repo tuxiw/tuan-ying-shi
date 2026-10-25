@@ -44,12 +44,13 @@ interface AnimeRepository {
 
     /**
      * 分类筛选列表（分类浏览页用，单页）。zoneId/tag/year/orderBy 含义见 AnimeSource.getFilterData。
+     * year 为字符串：兼容 Girigiri 的"2000至90年代"等非数字年份。
      * 返回已转模型的本页列表；空列表表示无数据或到达末页（由 ViewModel 负责翻页聚合）。
      */
     suspend fun getFilterPage(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,

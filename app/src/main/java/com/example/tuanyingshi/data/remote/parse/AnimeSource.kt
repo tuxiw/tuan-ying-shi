@@ -34,19 +34,19 @@ interface AnimeSource {
      * 分类筛选列表（分类浏览页用）。
      * @param zoneId 分区：1=TV番组, 2=剧场番组
      * @param tag 题材标签，null 表示全部
-     * @param year 年份，null 表示全部
+     * @param year 年份，null 表示全部（字符串以兼容 Girigiri 的"2000至90年代"等非数字年份）
      * @param orderBy 排序：null=更新时间(默认), "hits"=热度, "score"=评分, "follow"=追番
      * @param region 地区代码（JP/CN/US/KR），null 表示全部
      * @param type 类型代码（SERIES/OVA），null 表示全部
      * @param status 状态代码（ONGOING/FINISHED），null 表示全部
      * @param page 页码，从 1 开始
      *
-     * 默认空实现：仅支持结构化筛选的源（如 cycani / 后端）覆盖；其它源无需实现。
+     * 默认空实现：仅支持结构化筛选的源（如 cycani / girigiri / 后端）覆盖；其它源无需实现。
      */
     suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String? = null,
         type: String? = null,

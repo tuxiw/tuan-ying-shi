@@ -7,11 +7,9 @@ import com.example.tuanyingshi.util.preferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -24,7 +22,8 @@ import java.util.UUID
  * - 持久化订阅列表（SharedPreferences JSON），并提供 [StateFlow] 供设置页实时刷新；
  * - 默认内置订阅种子：**[团影视] css_v0.1_01.json** 与 **[团影视 XPath] xpath_v0.1_01.json**（均来自 tuanyingshi.pages.dev）；
  * - 订阅下的数据源以 [SourceRule] 形式写入 [SourceRuleRepository]（[subscriptionId] 关联）；
- * - 每 1 小时自动更新全部订阅（[startAutoUpdate] 在 [TuanyingApp] 启动时调用一次）。
+ * - 每 1 小时自动更新全部订阅（[startAutoUpdate] 在 [TuanyingApp] 启动时调用一次，
+ *   周期任务由 WorkManager 调度，见 [SubscriptionUpdateWorker]）。
  *
  * 更新逻辑：[refresh] 拉取远程 JSON → [SubscriptionImporter] 解析为规则 → 以稳定 id
  * `sub_<订阅id>_<序号>` 整体覆盖该订阅旧规则 → 更新订阅记录的更新时间 / 成败 / 数据源数。
@@ -161,19 +160,24 @@ object SourceSubscriptionRepository {
 
     /**
      * 启动每 1 小时自动更新。仅可在 Application 启动时调用一次。
-     * 启动后会立即补更「从未更新过」的订阅（首次运行 / 新增后未联网的情况）。
+     *
+     * 机制（2026-10-25 起改为 WorkManager 周期任务，替代原「进程内 delay 轮询」——
+     * 旧实现里计时器随进程消亡，杀进程重开后只会补更「从未更新过」的订阅、
+     * 不按已过去时间补救，后台进程冻结还会让 delay 挂起不恢复，表现为「无法自动每小时更新」）：
+     * 1. 入队全局唯一周期任务 [SubscriptionUpdateWorker]（1 小时 + 联网约束，系统调度，
+     *    App 死后依然执行，断网自动等待重试）；
+     * 2. 启动时另做一次「补欠」：从未更新过、或距上次更新已超过 1 小时的订阅立即刷新，
+     *    保证杀进程重开不会白等一个周期（与 AutoBackup / WebDavSync 的 runDue 同思路）。
      */
     fun startAutoUpdate() {
         if (autoUpdateStarted) return
         autoUpdateStarted = true
+        SubscriptionUpdateWorker.enqueuePeriodic(TuanyingApp.getInstance())
         scope.launch {
-            // 首次：补更从未更新过的订阅
-            _subscriptions.value.filter { it.lastUpdateTime == 0L }.forEach { refresh(it) }
-            // 之后每 1 小时轮询
-            while (isActive) {
-                delay(UPDATE_INTERVAL_MS)
-                refreshAll()
-            }
+            val now = System.currentTimeMillis()
+            _subscriptions.value
+                .filter { it.lastUpdateTime == 0L || now - it.lastUpdateTime >= UPDATE_INTERVAL_MS }
+                .forEach { refresh(it) }
         }
     }
 

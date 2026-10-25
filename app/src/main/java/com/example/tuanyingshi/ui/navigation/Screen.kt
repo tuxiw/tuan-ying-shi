@@ -12,6 +12,8 @@ sealed class Screen(val route: String) {
 
     object Settings : Screen("settings")
     object General : Screen("general")
+    /** 布局设置：首页 / 详情页列表每行列数（2-6，默认 4）。 */
+    object LayoutSettings : Screen("layout_settings")
     /** 下载设置（下载位置 / 同时下载 / 下载线程数）。 */
     object DownloadSettings : Screen("download_settings")
     /** 播放设置（自动换集等）。 */
@@ -33,9 +35,19 @@ sealed class Screen(val route: String) {
     /** 后端模式设置：开启后全部内容走自建后端 API，并禁用本地数据源 / 弹幕源切换。 */
     object BackendSettings : Screen("backend_settings")
     object SourceEditor : Screen("source_editor?ruleId={ruleId}&engine={engine}") {
+        /**
+         * 构造跳转路由。⚠️ 查询参数必须整体拼在**一个** `?` 之后：
+         * 旧实现在 ruleId 为空时直接 `"source_editor&engine=..."`（缺 `?`），
+         * 深链接无法匹配已注册路由，navigate 直接抛
+         * IllegalArgumentException「Navigation destination ... cannot be found」。
+         * ruleId / engine 均可空（新增规则源时二者为空），空则不出现在查询串里。
+         */
         fun create(ruleId: String? = null, engine: com.example.tuanyingshi.util.source_rule.RuleEngineKind? = null): String {
-            val base = if (ruleId == null) "source_editor" else "source_editor?ruleId=${Uri.encode(ruleId)}"
-            return if (engine == null) base else "$base&engine=${engine.name}"
+            val params = buildList {
+                if (ruleId != null) add("ruleId=${Uri.encode(ruleId)}")
+                if (engine != null) add("engine=${engine.name}")
+            }
+            return if (params.isEmpty()) "source_editor" else "source_editor?${params.joinToString("&")}"
         }
     }
     /** 调试模式专用：CSS 数据源测试分析工具（仅 Debug 构建入口可达）。 */
@@ -60,12 +72,25 @@ sealed class Screen(val route: String) {
 
     /** 后端模式：登录 / 注册（双 Tab）页。 */
     object Login : Screen("login")
+    /** 次元城源站登录页（全页面，替代旧登录弹窗）；pendingSourceId 非空表示登录成功后自动切到该源。 */
+    object CycaniLogin : Screen("cycani_login?username={username}&pendingSourceId={pendingSourceId}") {
+        fun create(username: String = "", pendingSourceId: String = "") =
+            "cycani_login?username=${Uri.encode(username)}&pendingSourceId=${Uri.encode(pendingSourceId)}"
+    }
+    /** 次元城源站注册页（邮箱验证码，全页面）。 */
+    object CycaniRegister : Screen("cycani_register?email={email}") {
+        fun create(email: String = "") = "cycani_register?email=${Uri.encode(email)}"
+    }
     /** 后端模式：我的收藏。 */
     object Favorites : Screen("favorites")
     /** 后端模式：我的追番（在看 / 看过 / 抛弃）。 */
     object Marks : Screen("marks")
     /** 后端模式：我的评分。 */
     object MyRatings : Screen("my_ratings")
+    /** 纯本地数据源：我的收藏（本机收藏表）。 */
+    object LocalFavorites : Screen("local_favorites")
+    /** 纯本地数据源：我的评分（本机评分表）。 */
+    object LocalRatings : Screen("local_ratings")
     /** 后端模式：帮助与反馈。 */
     object Feedback : Screen("feedback")
     /** 后端模式：账号管理（头像 / 昵称 / 签名 / 修改密码）。 */
@@ -78,17 +103,30 @@ sealed class Screen(val route: String) {
             "detail/${Uri.encode(detailUrl)}" + if (sourceId.isNotBlank()) "?sourceId=${Uri.encode(sourceId)}" else ""
     }
 
-    object Player : Screen("player/{detailUrl}/{episodeUrl}") {
-        fun create(detailUrl: String, episodeUrl: String) =
-            "player/${Uri.encode(detailUrl)}/${Uri.encode(episodeUrl)}"
+    /**
+     * 播放页：可选携带 sourceId（详情页当前生效的 CSS 规则源 / 资源源），
+     * 保证播放页按**同一个源**解析详情与选集，展示与详情页保持一致。
+     */
+    object Player : Screen("player/{detailUrl}/{episodeUrl}?sourceId={sourceId}") {
+        fun create(detailUrl: String, episodeUrl: String, sourceId: String = "") =
+            "player/${Uri.encode(detailUrl)}/${Uri.encode(episodeUrl)}" +
+                if (sourceId.isNotBlank()) "?sourceId=${Uri.encode(sourceId)}" else ""
     }
 
     /** 本地文件播放（下载完成后离线观看）。filePath 为文件绝对路径。 */
     object LocalPlayer : Screen("local_player/{filePath}?detailUrl={detailUrl}&episodeUrl={episodeUrl}") {
-        fun create(filePath: String, detailUrl: String = "", episodeUrl: String = "") =
-            "local_player/${Uri.encode(filePath)}" +
-                (if (detailUrl.isNotBlank()) "?detailUrl=${Uri.encode(detailUrl)}" else "") +
-                (if (episodeUrl.isNotBlank()) "&episodeUrl=${Uri.encode(episodeUrl)}" else "")
+        /**
+         * 构造跳转路由。⚠️ 与 [SourceEditor.create] 同坑：查询参数必须整体拼在一个 `?` 之后，
+         * 逐个条件拼接会在 detailUrl 为空而 episodeUrl 非空时产出 `...&episodeUrl=`（缺 `?`）导致 navigate 崩溃。
+         */
+        fun create(filePath: String, detailUrl: String = "", episodeUrl: String = ""): String {
+            val params = buildList {
+                if (detailUrl.isNotBlank()) add("detailUrl=${Uri.encode(detailUrl)}")
+                if (episodeUrl.isNotBlank()) add("episodeUrl=${Uri.encode(episodeUrl)}")
+            }
+            return "local_player/${Uri.encode(filePath)}" +
+                if (params.isEmpty()) "" else "?${params.joinToString("&")}"
+        }
     }
 
     /**

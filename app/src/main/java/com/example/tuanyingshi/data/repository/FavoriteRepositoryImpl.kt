@@ -48,6 +48,8 @@ class FavoriteRepositoryImpl @Inject constructor(private val dao: FavoriteDao) :
         }
     }
 
+    override suspend fun clearAll() = dao.deleteAll()
+
     override suspend fun remove(detailUrl: String) {
         dao.delete(detailUrl)
         if (BackendPrefs.isBackendMode()) {

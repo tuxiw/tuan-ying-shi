@@ -38,7 +38,7 @@ class FilterViewModel @Inject constructor(
     private data class FilterParams(
         val zoneId: Int = 1,
         val tag: String? = null,
-        val year: Int? = null,
+        val year: String? = null,
         val orderBy: String? = null,
         val region: String? = null,
         val type: String? = null,
@@ -98,7 +98,7 @@ class FilterViewModel @Inject constructor(
 
     fun setFilters(
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String? = null,
         type: String? = null,

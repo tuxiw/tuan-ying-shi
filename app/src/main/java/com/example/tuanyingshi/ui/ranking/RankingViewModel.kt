@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -25,8 +26,19 @@ class RankingViewModel @Inject constructor(
 ) : ViewModel() {
 
     /** 排行榜当前分类（仅用于标签高亮与初始页）。 */
-    private val _category = MutableStateFlow(RankingCategory.TV)
+    private val _category = MutableStateFlow(
+        if (SourceHolder.currentSourceMode == SourceMode.Hanime1) RankingCategory.LIANFAN else RankingCategory.TV
+    )
     val category: StateFlow<RankingCategory> = _category.asStateFlow()
+
+    /** 当前数据源可见的排行榜分类（Hanime1 = 里番/泡面番；其它源 = TV番组/剧场番组）。 */
+    val visibleCategories: StateFlow<List<RankingCategory>> = SourceHolder.sourceModeFlow
+        .map { visibleCategoriesFor(it) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            visibleCategoriesFor(SourceHolder.currentSourceMode),
+        )
 
     /** 全量榜单（原始，未过滤），按分类名映射（如 TV番组 / 剧场番组）。 */
     private val _ranking = MutableStateFlow<Map<String, List<Anime>>>(emptyMap())
@@ -94,9 +106,21 @@ class RankingViewModel @Inject constructor(
 }
 
 /**
- * 排行榜分类 tab：TV番组 / 剧场番组。
+ * 排行榜分类 tab。
+ *
+ * - 常规源（次元城等）：TV番组 / 剧场番组；
+ * - Hanime1 源：里番 / 泡面番（由 [visibleCategoriesFor] 按当前数据源切换，
+ *   对应 [com.example.tuanyingshi.data.remote.parse.Hanime1Source.getRanking] 返回的 map key）。
  */
 enum class RankingCategory(val label: String) {
     TV("TV番组"),
     MOVIE("剧场番组"),
+    LIANFAN("里番"),
+    PAOMIAN("泡面番"),
+}
+
+/** 当前数据源在排行榜页展示的分类选项。 */
+fun visibleCategoriesFor(mode: SourceMode): List<RankingCategory> = when (mode) {
+    SourceMode.Hanime1 -> listOf(RankingCategory.LIANFAN, RankingCategory.PAOMIAN)
+    else -> listOf(RankingCategory.TV, RankingCategory.MOVIE)
 }

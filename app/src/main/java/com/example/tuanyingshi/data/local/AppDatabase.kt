@@ -9,11 +9,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.tuanyingshi.data.local.dao.DownloadDao
 import com.example.tuanyingshi.data.local.dao.FavoriteDao
 import com.example.tuanyingshi.data.local.dao.HistoryDao
+import com.example.tuanyingshi.data.local.dao.RatingDao
 import com.example.tuanyingshi.data.local.dao.UserStatusDao
 import com.example.tuanyingshi.data.local.entity.DownloadEntity
 import com.example.tuanyingshi.data.local.entity.EpisodeEntity
 import com.example.tuanyingshi.data.local.entity.FavoriteEntity
 import com.example.tuanyingshi.data.local.entity.HistoryEntity
+import com.example.tuanyingshi.data.local.entity.RatingEntity
 import com.example.tuanyingshi.data.local.entity.UserAnimeStatusEntity
 import com.example.tuanyingshi.util.ANIME_DATABASE
 
@@ -49,6 +51,40 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+/**
+ * 5 → 6：新增 rating_table（本地评分，非后端模式下的「我的评分」）。
+ */
+private val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS rating_table (
+                rating_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                title TEXT NOT NULL,
+                detail_url TEXT NOT NULL,
+                img_url TEXT NOT NULL DEFAULT '',
+                rating REAL NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_rating_table_detail_url " +
+                "ON rating_table(detail_url)",
+        )
+    }
+}
+
+/**
+ * 6 → 7：历史表新增 source_name（当时使用的数据源名称），浏览历史页可展示「用的哪个源」。
+ */
+private val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE history_table ADD COLUMN source_name TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 @Database(
     entities = [
         FavoriteEntity::class,
@@ -56,8 +92,9 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
         EpisodeEntity::class,
         DownloadEntity::class,
         UserAnimeStatusEntity::class,
+        RatingEntity::class,
     ],
-    version = 5,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -65,6 +102,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun downloadDao(): DownloadDao
     abstract fun userStatusDao(): UserStatusDao
+    abstract fun ratingDao(): RatingDao
 
     companion object {
         @Volatile
@@ -77,7 +115,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     ANIME_DATABASE,
-                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

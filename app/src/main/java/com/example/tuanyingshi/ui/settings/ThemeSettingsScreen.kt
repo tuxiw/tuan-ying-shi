@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 
 /**
- * 手机端「主题配色」独立页（设置 → 主题配色）。
+ * 手机端「主题与色彩」独立页（设置 → 个性功能 → 主题与色彩）。
  * 内容复用 [ThemeSettingsContent]，与平板端设置页右侧面板保持一致。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,7 +30,7 @@ fun ThemeSettingsScreen(navController: NavController) {
         topBar = {
             TopAppBar(
                 windowInsets = WindowInsets(0),
-                title = { Text("主题配色", color = MaterialTheme.colorScheme.onBackground) },
+                title = { Text("主题与色彩", color = MaterialTheme.colorScheme.onBackground) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(

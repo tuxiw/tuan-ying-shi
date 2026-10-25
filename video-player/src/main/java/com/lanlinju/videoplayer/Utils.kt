@@ -45,9 +45,15 @@ internal fun Constraints.resizeForVideo(
     aspectRatio: Float
 ): Constraints {
     if (aspectRatio <= 0f) {
-        // 设置默认视频显示大小为：横屏模式下宽高比为16:9的大小
-        val width = (maxHeight * VIDEO_ASPECT_RATIO_16_9).toInt() // default 16 : 9
-        return this.copy(maxWidth = width)
+        // videoSize 未知（首次加载 / 切集瞬间）按 16:9 兜底，但必须钳制在可用区域内：
+        // 之前直接 width = maxHeight * 16/9，在「高>宽×9/16」的面板（平板左右分栏、竖屏）
+        // 会算出比容器更宽的尺寸，画面溢出裁切、表现为换集时播放器被放大。改为等比 letterbox。
+        val widthByHeight = (maxHeight * VIDEO_ASPECT_RATIO_16_9).toInt()
+        return if (widthByHeight <= maxWidth) {
+            this.copy(maxWidth = widthByHeight)
+        } else {
+            this.copy(maxHeight = (maxWidth / VIDEO_ASPECT_RATIO_16_9).toInt())
+        }
     }
 
     var width = maxWidth

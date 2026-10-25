@@ -35,11 +35,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.ui.components.CenteredMessage
+import com.example.tuanyingshi.ui.components.NsfwBlockedHint
 import com.example.tuanyingshi.ui.components.RankingRowCard
 import com.example.tuanyingshi.ui.components.isExpanded
 import com.example.tuanyingshi.ui.components.isTablet
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.ui.ranking.components.RankingTabs
+import com.example.tuanyingshi.util.ContentPrefs
+import com.example.tuanyingshi.util.SourceMode
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterialApi::class)
@@ -49,17 +52,29 @@ fun RankingScreen(
     viewModel: RankingViewModel = hiltViewModel(),
 ) {
     val category by viewModel.category.collectAsStateWithLifecycle()
+    val categories by viewModel.visibleCategories.collectAsStateWithLifecycle()
     val ranking by viewModel.ranking.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    val categories = RankingCategory.values().toList()
 
     // 数据源切换后，主动重新拉取榜单数据；同源重复进入不重复加载（去重在 ViewModel 内完成）。
     val sourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
     LaunchedEffect(sourceId) { viewModel.loadIfSourceChanged() }
 
+    // Hanime1 全站成人内容：NSFW 屏蔽开启时榜单被 filterContent 清空，空态给出屏蔽提示
+    val nsfwBlock by ContentPrefs.nsfwBlock.collectAsStateWithLifecycle()
+    val isHanime1 = sourceId == SourceMode.Hanime1
+
+    // 分类集合随数据源变化（Hanime1 = 里番/泡面番）：当前分类不在新集合时回退到第一项。
+    LaunchedEffect(categories, category) {
+        if (category !in categories) {
+            viewModel.setCategory(categories.first())
+            return@LaunchedEffect
+        }
+    }
+
     val pagerState = rememberPagerState(
-        initialPage = category.ordinal,
+        initialPage = categories.indexOf(category).coerceAtLeast(0),
         pageCount = { categories.size },
     )
 
@@ -96,8 +111,9 @@ fun RankingScreen(
                 textAlign = TextAlign.Center,
             )
 
-            // 分类 tab
+            // 分类 tab（按当前数据源过滤：Hanime1 = 里番/泡面番，其余源 = TV番组/剧场番组）
             RankingTabs(
+                categories = categories,
                 selectedIndex = pagerState.currentPage,
                 onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
             )
@@ -119,7 +135,11 @@ fun RankingScreen(
                 val cat = categories[page]
                 val items = remember(ranking, cat) { RankingViewModel.itemsFor(cat, ranking) }
                 if (items.isEmpty()) {
-                    CenteredMessage("暂无排行数据", Modifier.fillMaxSize())
+                    if (isHanime1 && nsfwBlock) {
+                        NsfwBlockedHint(Modifier.fillMaxSize())
+                    } else {
+                        CenteredMessage("暂无排行数据", Modifier.fillMaxSize())
+                    }
                 } else {
                     val columns = when {
                         isExpanded() -> 3

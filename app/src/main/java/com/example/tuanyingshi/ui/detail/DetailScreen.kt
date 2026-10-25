@@ -3,6 +3,7 @@ package com.example.tuanyingshi.ui.detail
 import android.Manifest
 import android.os.Build
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -82,15 +85,20 @@ import com.example.tuanyingshi.ui.components.DetailInfoSkeleton
 import com.example.tuanyingshi.ui.components.EpisodesLoading
 import com.example.tuanyingshi.ui.components.ExpandableText
 import com.example.tuanyingshi.ui.components.MediaSourceSheet
+import com.example.tuanyingshi.ui.components.EpisodeGrid
+import com.example.tuanyingshi.ui.components.SourceSwitchCard
 import com.example.tuanyingshi.ui.components.SectionTitle
 import com.example.tuanyingshi.ui.components.SourceIcon
 import com.example.tuanyingshi.ui.components.isTablet
+import com.example.tuanyingshi.ui.detail.hanime1.Hanime1DetailContent
+import com.example.tuanyingshi.domain.model.Episode
 import com.example.tuanyingshi.ui.components.LocalUserStatusRepository
 import com.example.tuanyingshi.ui.components.NsfwBlockedScaffold
 import com.example.tuanyingshi.ui.detail.DownloadSheet
 import com.example.tuanyingshi.ui.download.DownloadViewModel
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.ContentPrefs
+import com.example.tuanyingshi.ui.components.effectiveDetailColumns
 import com.example.tuanyingshi.util.NotifPrefs
 import com.example.tuanyingshi.util.isNsfw
 import kotlinx.coroutines.flow.flowOf
@@ -110,12 +118,19 @@ fun DetailScreen(
     val selectedChannel by viewModel.selectedChannel.collectAsStateWithLifecycle()
     val sourceName by viewModel.sourceName.collectAsStateWithLifecycle()
     val iconUrl by viewModel.iconUrl.collectAsStateWithLifecycle()
+    // 当前生效数据源 id：播放页导航带上它，保证两页按同一个源解析
+    val currentSourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
     val sourceCandidates by viewModel.sourceCandidates.collectAsStateWithLifecycle()
+    val queryStates by viewModel.queryStates.collectAsStateWithLifecycle()
+    val queriedCount by viewModel.queriedCount.collectAsStateWithLifecycle()
+    val queryTotal by viewModel.queryTotal.collectAsStateWithLifecycle()
     val channelsLoading by viewModel.channelsLoading.collectAsStateWithLifecycle()
     val isFavorite by viewModel.isFavorite.collectAsStateWithLifecycle()
     val userRating by viewModel.userRating.collectAsStateWithLifecycle()
     val actionMessage by viewModel.message.collectAsStateWithLifecycle()
     val lastWatched by viewModel.lastWatched.collectAsStateWithLifecycle()
+    // 布局设置中的详情页列表列数：自适应开启时按屏幕宽度实时算，否则用手动值（2-6，默认 3）
+    val detailColumns = effectiveDetailColumns()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -204,6 +219,15 @@ fun DetailScreen(
             )
         }
     ) { inner ->
+        // Hanime1 主数据源：整页切换到 Han1meViewer 风格详情（横版封面 / 标签 / 系列 / 推荐）。
+        if (com.example.tuanyingshi.util.SourceHolder.currentSourceMode == com.example.tuanyingshi.util.SourceMode.Hanime1) {
+            Hanime1DetailContent(
+                navController = navController,
+                detailUrl = detailUrl,
+                modifier = Modifier.padding(inner),
+            )
+            return@Scaffold
+        }
         val anime = detail
         if (anime == null) {
             if (!online) {
@@ -257,7 +281,7 @@ fun DetailScreen(
                     Button(
                         onClick = {
                             val ep = continueEpisode ?: return@Button
-                            navController.navigate(Screen.Player.create(detailUrl, ep.url))
+                            navController.navigate(Screen.Player.create(detailUrl, ep.url, currentSourceId))
                         },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = continueEpisode != null,
@@ -378,6 +402,16 @@ fun DetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(20.dp))
+                    SourceSwitchCard(
+                        sourceName = sourceName,
+                        iconUrl = iconUrl,
+                        onClick = {
+                            viewModel.loadSourceCandidates()
+                            showSourceSheet = true
+                        },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    SectionTitle("选集")
                     if (channels.size > 1) {
                         ChannelTabs(
                             names = channelNames,
@@ -385,36 +419,18 @@ fun DetailScreen(
                             onSelect = viewModel::selectChannel,
                         )
                     }
-                    SectionTitle("选集")
                     Spacer(Modifier.height(10.dp))
                     if (channelsLoading && episodes.isEmpty()) {
                         // 选集（CSS 线路）后台补全中：仅此区域显示加载动画，其余元数据已真实显示
                         EpisodesLoading("选集加载中…")
                     } else {
-                    val columns = 4
-                    episodes.chunked(columns).forEach { rowEps ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            rowEps.forEach { ep ->
-                                OutlinedButton(
-                                    onClick = { navController.navigate(Screen.Player.create(detailUrl, ep.url)) },
-                                    modifier = Modifier.weight(1f).height(46.dp),
-                                ) {
-                                    Text(
-                                        ep.name,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                            repeat(columns - rowEps.size) {
-                                Spacer(Modifier.weight(1f))
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                    }
+                        EpisodeGrid(
+                            episodes = episodes,
+                            columns = detailColumns,
+                            // 上次看到的一集高亮（与播放页当前集高亮同款）
+                            currentEpisodeUrl = lastWatched?.lastEpisodeUrl,
+                            onPlay = { ep -> navController.navigate(Screen.Player.create(detailUrl, ep.url, currentSourceId)) },
+                        )
                     }
                 }
             }
@@ -475,14 +491,6 @@ fun DetailScreen(
                         label = "报错",
                         onClick = { showReport = true },
                     )
-                    DetailActionItem(
-                        icon = Icons.Filled.Language,
-                        label = "数据源",
-                        onClick = {
-                            viewModel.loadSourceCandidates()
-                            showSourceSheet = true
-                        },
-                    )
                 }
 
                 ExpandableText(
@@ -490,6 +498,16 @@ fun DetailScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
 
+                SourceSwitchCard(
+                    sourceName = sourceName,
+                    iconUrl = iconUrl,
+                    onClick = {
+                        viewModel.loadSourceCandidates()
+                        showSourceSheet = true
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                SectionTitle("选集")
                 if (channels.size > 1) {
                     ChannelTabs(
                         names = channelNames,
@@ -497,20 +515,16 @@ fun DetailScreen(
                         onSelect = viewModel::selectChannel,
                     )
                 }
-                SectionTitle("选集")
                 if (channelsLoading && episodes.isEmpty()) {
                     EpisodesLoading("选集加载中…", modifier = Modifier.padding(vertical = 10.dp))
                 } else {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    itemsIndexed(episodes, key = { index, ep -> "${index}_${ep.url}" }) { _, ep ->
-                        OutlinedButton(onClick = {
-                            navController.navigate(Screen.Player.create(detailUrl, ep.url))
-                        }) { Text(ep.name) }
-                    }
-                }
+                    EpisodeGrid(
+                        episodes = episodes,
+                        columns = detailColumns,
+                        // 上次看到的一集高亮（与播放页当前集高亮同款）
+                        currentEpisodeUrl = lastWatched?.lastEpisodeUrl,
+                        onPlay = { ep -> navController.navigate(Screen.Player.create(detailUrl, ep.url, currentSourceId)) },
+                    )
                 }
             }
         }
@@ -610,14 +624,23 @@ fun DetailScreen(
             candidates = sourceCandidates,
             currentSourceId = detail?.sourceId ?: "",
             currentChannelIndex = selectedChannel,
+            queryStates = queryStates,
+            queriedCount = queriedCount,
+            queryTotal = queryTotal,
+            searchTitle = viewModel.currentSearchTitle(),
             onSelect = { candidate, line ->
                 viewModel.selectDetailSource(candidate, line)
                 showSourceSheet = false
             },
+            onRequery = { title, aliases ->
+                viewModel.loadSourceCandidates(titleOverride = title, aliases = aliases, force = true)
+            },
+            onRefresh = { viewModel.loadSourceCandidates(force = true) },
             onDismiss = { showSourceSheet = false },
         )
     }
 }
+
 
 @Composable
 private fun DetailActionItem(
@@ -723,3 +746,8 @@ fun ChannelTabs(
         }
     }
 }
+
+/**
+ * 数据源快捷卡片已上移到 `ui/components/SourceSwitchCard.kt`（播放页换源入口共用同一组件）。
+ */
+

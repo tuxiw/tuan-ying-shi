@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.tuanyingshi.data.repository.UserStatusRepository
+import com.example.tuanyingshi.ui.components.CfVerificationGate
 import com.example.tuanyingshi.ui.components.LocalUserStatusRepository
 import com.example.tuanyingshi.ui.navigation.AppNavigation
 import com.example.tuanyingshi.ui.theme.TuanyingshiTheme
@@ -47,7 +48,8 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        AppNavigation()
+                        // 全局 Cloudflare 验证闸门：任何源撞 CF 挑战页时在最上层过盾（默认静默跑后台）。
+                        CfVerificationGate { AppNavigation() }
                     }
                 }
             }

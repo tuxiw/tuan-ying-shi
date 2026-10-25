@@ -91,7 +91,8 @@ class DiagnosticsViewModel @Inject constructor() : ViewModel() {
                 "onEnter 完成 ✓（${when (mode) {
                     SourceMode.Cycanime -> "WebView 内核可用，视频解析走拦截"
                     SourceMode.Silisili -> "OkHttp 直连，视频解析走 POST 解密"
-                    SourceMode.Girigiri -> "OkHttp 直连，视频解析走 Base64 解码"
+                    SourceMode.Girigiri -> "API 直连（m3u8 接口域），播放地址取自详情接口"
+                    SourceMode.Hanime1 -> "内置专用 API 客户端直连站点抓取，视频解析走 MP4 直链"
                     SourceMode.Rule -> "规则/CSS 解析：按规则选择器抓取，视频解析走对应策略"
                 }}）"
             }
@@ -190,14 +191,27 @@ class DiagnosticsViewModel @Inject constructor() : ViewModel() {
             }.trimEnd()
         }
         SourceMode.Girigiri -> {
-            val blocked = html.contains("不提供服务") || html.contains("不提供")
-            val hasContent = html.contains("public-list-box") || html.contains("week-module-box")
+            // API 源：探针为 m3u8 接口域的时间表 JSON（站点 Web 前端部分地区不可达）
+            val ok = html.contains("\"code\":1") || html.contains("'code':1")
+            val hasContent = html.contains("vod_name") || html.contains("week")
+            buildString {
+                appendLine("接口返回长度：${html.length}")
+                appendLine("接口可达(code=1)：${if (ok) "是 ✓" else "否 ⚠"}")
+                appendLine("含番剧内容标记(vod_name/week)：${if (hasContent) "是 ✓" else "否 ⚠"}")
+                if (!ok || !hasContent) {
+                    appendLine("→ 接口不可达或返回异常：网络被墙（建议在设置中开启代理）/ 接口路径变更")
+                }
+            }.trimEnd()
+        }
+        SourceMode.Hanime1 -> {
+            val blocked = html.contains("Just a moment") || html.contains("cf-chl") || html.contains("Enable JavaScript")
+            val hasContent = html.contains("home-rows-wrapper") || html.contains("home-banner-wrapper")
             buildString {
                 appendLine("HTML 长度：${html.length}")
-                appendLine("疑似拦截/空壳页：${if (blocked) "是 ⚠" else "否"}")
-                appendLine("含番剧内容标记(public-list-box/week-module-box)：${if (hasContent) "是 ✓" else "否 ⚠"}")
+                appendLine("Cloudflare 挑战页：${if (blocked) "是 ⚠（需先在 WebView 过盾获取 cf_clearance）" else "否"}")
+                appendLine("含番剧内容标记(home-rows-wrapper/home-banner-wrapper)：${if (hasContent) "是 ✓" else "否 ⚠"}")
                 if (!hasContent) {
-                    appendLine("→ 未匹配到内容标记：站点被墙（建议在设置中开启代理）/ 页面结构变更 / 选择器失效")
+                    appendLine("→ 未匹配到内容标记：Cloudflare 拦截 / 页面结构变更 / 选择器失效")
                 }
             }.trimEnd()
         }

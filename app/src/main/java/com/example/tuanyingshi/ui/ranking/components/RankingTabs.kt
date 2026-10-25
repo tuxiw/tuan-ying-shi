@@ -22,13 +22,14 @@ import androidx.compose.ui.unit.sp
 import com.example.tuanyingshi.ui.ranking.RankingCategory
 
 /**
- * 排行榜分类 chip 行（4 项）：剧集 / 动漫 / 美剧 / 电影。
- * 与外层 HorizontalPager 联动：点击 chip 通过 [onSelect] 触发 pager 滑动，选中态由 [selectedIndex] 决定。
+ * 排行榜分类 tab 行（项数由 [categories] 决定：常规源 = TV番组/剧场番组，Hanime1 = 里番/泡面番）。
+ * 与外层 HorizontalPager 联动：点击 tab 通过 [onSelect] 触发 pager 滑动，选中态由 [selectedIndex] 决定。
  * - 选中态：白色文字 + 底部白色短下划线
  * - 非选中：onSurfaceVariant 灰色文字
  */
 @Composable
 fun RankingTabs(
+    categories: List<RankingCategory>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -38,7 +39,7 @@ fun RankingTabs(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
-        RankingCategory.values().forEachIndexed { index, cat ->
+        categories.forEachIndexed { index, cat ->
             val isSelected = index == selectedIndex
 
             Column(

@@ -82,6 +82,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.tuanyingshi.domain.model.Anime
+import com.example.tuanyingshi.data.remote.api.cycani.CycaniAuthManager
 import com.example.tuanyingshi.domain.model.Comment
 import com.example.tuanyingshi.domain.model.Episode
 import com.example.tuanyingshi.ui.player.DownloadedEpisode
@@ -94,7 +95,9 @@ import com.example.tuanyingshi.ui.components.NsfwBlockedScaffold
 import com.example.tuanyingshi.ui.components.isTablet
 import com.example.tuanyingshi.ui.detail.ChannelTabs
 import com.example.tuanyingshi.ui.components.MediaSourceSheet
+import com.example.tuanyingshi.ui.components.EpisodeGrid
 import com.example.tuanyingshi.ui.components.SourceIcon
+import com.example.tuanyingshi.ui.components.SourceSwitchCard
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.ContentPrefs
 import com.example.tuanyingshi.util.DanmakuPrefs
@@ -150,7 +153,17 @@ fun PlayerScreen(
     val channelNames by viewModel.channelNames.collectAsStateWithLifecycle()
     val currentChannelIndex by viewModel.currentChannelIndex.collectAsStateWithLifecycle()
     val sourceCandidates by viewModel.sourceCandidates.collectAsStateWithLifecycle()
+    val queryStates by viewModel.queryStates.collectAsStateWithLifecycle()
+    val queriedCount by viewModel.queriedCount.collectAsStateWithLifecycle()
+    val queryTotal by viewModel.queryTotal.collectAsStateWithLifecycle()
     val showSourcePicker by viewModel.showSourcePicker.collectAsStateWithLifecycle()
+    // 当前生效数据源（换源后同步更新；与详情页选择保持一致）
+    val currentSourceName by viewModel.currentSourceName.collectAsStateWithLifecycle()
+    val currentSourceIcon by viewModel.currentSourceIcon.collectAsStateWithLifecycle()
+    // 选择面板「当前源」高亮：与数据源卡同一个 id（资源源回退全局 currentSourceId）
+    val sheetSourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
+    // 次元城登录是否已失效（用于在错误页放「重新登录」入口，点击导航到登录页）
+    val cycaniExpired by CycaniAuthManager.sessionExpired.collectAsStateWithLifecycle()
     // 弹幕数据（统一来自弹弹play 弹幕库，所有数据源的剧集都按番名+集名匹配加载）
     val danmakuItems by viewModel.danmakuItems.collectAsStateWithLifecycle()
     // 当前集自动匹配到的弹幕番剧/集信息（播放页展示 + 手动切换）
@@ -191,19 +204,30 @@ fun PlayerScreen(
     if (showSourceSheet) {
         MediaSourceSheet(
             candidates = sourceCandidates,
-            currentSourceId = anime?.sourceId ?: "",
+            currentSourceId = sheetSourceId,
             currentChannelIndex = currentChannelIndex,
+            queryStates = queryStates,
+            queriedCount = queriedCount,
+            queryTotal = queryTotal,
+            searchTitle = viewModel.currentSearchTitle(),
             onSelect = { candidate, line ->
                 viewModel.selectSourceVideo(candidate, line)
                 showSourceSheet = false
                 viewModel.clearShowSourcePicker()
             },
+            onRequery = { title, aliases ->
+                viewModel.loadSourceCandidates(titleOverride = title, aliases = aliases, force = true)
+            },
+            onRefresh = { viewModel.loadSourceCandidates(force = true) },
             onDismiss = {
                 showSourceSheet = false
                 viewModel.onSourceSheetDismissed()
             },
         )
     }
+
+    // 次元城登录失效：不再弹窗——错误页的「重新登录次元城」按钮导航到全屏登录页，
+    // 登录成功返回后 ViewModel 检测到 sessionExpired 复位会自动重试解析。
 
     // 弹幕手动匹配搜索面板：展示当前自动匹配的弹幕番剧/集，并允许按关键词搜索、手动选定为当前集弹幕来源。
     if (showDanmakuSearchDialog) {
@@ -529,15 +553,32 @@ fun PlayerScreen(
     }
 
     val isTabletDevice = isTablet()
+    // 选中 Hanime1 主数据源时，播放页评论区走 Hanime1 评论接口、简介区附带「系列/相关推荐」。
+    val isHanime1 = com.example.tuanyingshi.util.SourceHolder.currentSourceMode ==
+        com.example.tuanyingshi.util.SourceMode.Hanime1
 
     @Composable
     fun VideoSurface(modifier: Modifier) {
         Box(modifier = modifier.background(Color.Black)) {
+            val sourceFinding by viewModel.sourceFinding.collectAsStateWithLifecycle()
+            val sourceFindRemaining by viewModel.sourceFindRemainingMs.collectAsStateWithLifecycle()
+            val autoSwitchingSource by viewModel.autoSwitchingSource.collectAsStateWithLifecycle()
+            val loadingMsg = when {
+                autoSwitchingSource -> "正在自动切换数据源…"
+                sourceFinding && sourceFindRemaining > 0 -> "正在寻找可播放链接… ${sourceFindRemaining / 1000}s"
+                else -> "视频加载中…"
+            }
             when {
                 // 出错：视频区显示内联错误（含重试 / 看已下载），不再整页替换，信息面板仍可见
                 error != null -> ErrorOverlay(
                     message = error,
                     downloaded = downloaded,
+                    reloginText = if (cycaniExpired) "重新登录次元城" else null,
+                    onRelogin = {
+                        navController.navigate(
+                            Screen.CycaniLogin.create(username = CycaniAuthManager.username.orEmpty()),
+                        )
+                    },
                     onRetry = viewModel::retry,
                     onWatchDownloaded = { dl ->
                         navController.navigate(Screen.LocalPlayer.create(dl.filePath, detailUrl, dl.episodeUrl))
@@ -582,7 +623,8 @@ fun PlayerScreen(
                 }
                 )
                 // 加载中：视频区显示局部加载动画（用户已「进入页面」，仅此区域在转圈）
-                else -> LoadingIndicator("视频加载中…")
+                // 找源阶段显示 5 秒倒计时 / 自动切换提示，避免慢源时干等黑屏
+                else -> LoadingIndicator(loadingMsg)
             }
             // 弹幕覆盖层：与视频画面共用 video-player 的 adaptiveLayout 定尺居中。
             // 之前是弹幕层自己按「假设的宽高比」算 letterbox 内边距，而视频由 adaptiveLayout
@@ -657,6 +699,13 @@ fun PlayerScreen(
             )
             PlayerTabBar(tab = tab, onChange = { tab = it }, commentCount = comments.size)
 
+            // Hanime1 风格：简介区上方插入「系列 / 相关推荐」横向行（拉取该视频的 series + related）。
+            if (isHanime1) {
+                val hanime1Code = (video?.episodeUrl ?: detailUrl).substringAfterLast("/").substringBefore("?")
+                com.example.tuanyingshi.ui.player.hanime1.Hanime1RelatedRow(videoCode = hanime1Code, navController = navController)
+                Spacer(Modifier.height(8.dp))
+            }
+
             when (tab) {
                 PlayerTab.INTRO -> IntroContent(
                     anime = anime,
@@ -667,6 +716,8 @@ fun PlayerScreen(
                     detailUrl = detailUrl,
                     channelNames = channelNames,
                     currentChannelIndex = currentChannelIndex,
+                    sourceName = currentSourceName,
+                    sourceIconUrl = currentSourceIcon,
                     onChannelClick = { viewModel.selectChannel(it) },
                     onEpisodeClick = { ep ->
                         // 切换集数前记录上一集播放进度
@@ -681,7 +732,12 @@ fun PlayerScreen(
                     onRelatedClick = { url -> navController.navigate(Screen.Detail.create(url)) },
                     onOpenSourceSheet = onOpenSourceSheet,
                 )
-                PlayerTab.COMMENTS -> CommentsList(comments, onAddComment = viewModel::addComment)
+                PlayerTab.COMMENTS -> if (isHanime1) {
+                    val hanime1Code = (video?.episodeUrl ?: detailUrl).substringAfterLast("/").substringBefore("?")
+                    com.example.tuanyingshi.ui.player.hanime1.Hanime1CommentsBlock(videoCode = hanime1Code)
+                } else {
+                    CommentsList(comments, onAddComment = viewModel::addComment)
+                }
             }
         }
     }
@@ -902,6 +958,9 @@ private fun ErrorOverlay(
     downloaded: List<DownloadedEpisode>,
     onRetry: () -> Unit,
     onWatchDownloaded: (DownloadedEpisode) -> Unit,
+    /** 非空时额外展示一个「重新登录」按钮（次元城 token 失效场景）。 */
+    reloginText: String? = null,
+    onRelogin: () -> Unit = {},
 ) {
     Column(
         Modifier
@@ -927,6 +986,10 @@ private fun ErrorOverlay(
             Button(onClick = { onWatchDownloaded(downloaded.first()) }) {
                 Text("观看已下载（${downloaded.size}）")
             }
+            Spacer(Modifier.height(12.dp))
+        }
+        if (reloginText != null) {
+            Button(onClick = onRelogin) { Text(reloginText) }
             Spacer(Modifier.height(12.dp))
         }
         OutlinedButton(onClick = onRetry) { Text("重试") }
@@ -976,6 +1039,8 @@ private fun IntroContent(
     detailUrl: String,
     channelNames: List<String> = emptyList(),
     currentChannelIndex: Int = 0,
+    sourceName: String = "",
+    sourceIconUrl: String = "",
     onChannelClick: (Int) -> Unit = {},
     onEpisodeClick: (Episode) -> Unit,
     onDownloadedClick: (DownloadedEpisode) -> Unit,
@@ -997,31 +1062,14 @@ private fun IntroContent(
             )
         }
         item {
-            // 来源标识 + 换源入口（animeko：播放页可切换 mediaSource）
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-            ) {
-                if ((anime?.sourceName ?: "").isNotEmpty()) {
-                    SourceIcon(iconUrl = anime?.iconUrl ?: "", size = 18.dp)
-                    Text(
-                        "来源：${anime?.sourceName}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                TextButton(onClick = onOpenSourceSheet) {
-                    Icon(Icons.Filled.Language, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("换源")
-                }
-            }
+            // 数据源快捷卡片：与详情页同一组件、同一选择（换源后实时更新），
+            // 点击打开「选择数据源」面板（animeko：播放页可切换 mediaSource）
+            SourceSwitchCard(
+                sourceName = sourceName,
+                iconUrl = sourceIconUrl,
+                onClick = onOpenSourceSheet,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
         }
         item {
             ExpandableText(
@@ -1059,7 +1107,7 @@ private fun IntroContent(
             }
         }
         item {
-            SectionHeader("分集")
+            SectionHeader("选集")
             if (channelNames.size > 1) {
                 ChannelTabs(
                     names = channelNames,
@@ -1067,19 +1115,13 @@ private fun IntroContent(
                     onSelect = onChannelClick,
                 )
             }
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(vertical = 8.dp),
-            ) {
-                itemsIndexed(episodes, key = { index, ep -> "${index}_${ep.url}" }) { _, ep ->
-                    EpisodeChip(
-                        title = ep.name,
-                        selected = ep.url == currentEpisodeUrl,
-                        onClick = { onEpisodeClick(ep) },
-                    )
-                }
-            }
+            // 与详情页同一选集网格组件（同列数自适应/同样式），当前播放集高亮
+            EpisodeGrid(
+                episodes = episodes,
+                onPlay = onEpisodeClick,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                currentEpisodeUrl = currentEpisodeUrl,
+            )
         }
         if (related.isNotEmpty()) {
             item { SectionHeader("相关动画") }

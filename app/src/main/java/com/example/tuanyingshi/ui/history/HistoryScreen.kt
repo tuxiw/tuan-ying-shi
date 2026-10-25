@@ -170,11 +170,23 @@ private fun HistoryRow(
                 )
             }
             Spacer(Modifier.height(4.dp))
+            // 数据来源：本地历史记录了当时使用的数据源（如「叽哔动漫」）
+            val sourceText = item.sourceName?.takeIf { it.isNotBlank() }
             Text(
-                text = formatRelativeTime(item.updatedAt),
+                text = sourceText?.let { "数据源：$it" } ?: formatRelativeTime(item.updatedAt),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            if (sourceText != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = formatRelativeTime(item.updatedAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         IconButton(onClick = onRemove) {
             Icon(

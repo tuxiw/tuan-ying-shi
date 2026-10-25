@@ -15,8 +15,8 @@ android {
         applicationId = "com.example.tuanyingshi"
         minSdk = 24
         targetSdk = 35
-        versionCode = 66
-        versionName = "0.6.6"
+        versionCode = 84
+        versionName = "0.8.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -92,12 +92,17 @@ dependencies {
     // navigation
     implementation(libs.androidx.navigation.compose)
 
+    // WebView 代理（androidx.webkit.ProxyController，正式 API；过盾/解析 WebView 走 App 内代理）
+    implementation(libs.androidx.webkit)
+
     // image loading
     implementation(libs.coil.compose)
 
     // network
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging.interceptor)
+    // 数据源订阅每 1 小时自动更新：WorkManager 周期任务（进程死后仍由系统调度）
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.gson)

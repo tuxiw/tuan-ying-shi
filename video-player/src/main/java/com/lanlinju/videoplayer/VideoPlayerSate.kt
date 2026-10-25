@@ -371,6 +371,15 @@ class VideoPlayerStateImpl(
     }
 
     override fun onVideoSizeChanged(videoSize: VideoSize) {
+        // 切集时 ExoPlayer 会先上报 VideoSize.UNKNOWN(0x0) 再解析出新尺寸：
+        // 保留上一次的已知尺寸，避免「换集瞬间画面按 0 比例兜底被放大裁切」的闪烁；
+        // 只有从未拿到过尺寸（真·无视频轨）时才采纳 0x0。
+        if (videoSize.width == 0 || videoSize.height == 0) {
+            if (this.videoSize.value.width == 0 && this.videoSize.value.height == 0) {
+                this.videoSize.value = videoSize
+            }
+            return
+        }
         this.videoSize.value = videoSize
     }
 

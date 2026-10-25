@@ -2,6 +2,7 @@ package com.example.tuanyingshi.util.source_rule
 
 import android.content.SharedPreferences
 import com.example.tuanyingshi.TuanyingApp
+import com.example.tuanyingshi.util.ContentPrefs
 import com.example.tuanyingshi.util.preferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,8 +38,19 @@ object SourceRuleRepository {
         _rules.value = mergeBuiltIn(load())
     }
 
-    /** 返回全部规则快照。 */
+    /** 返回全部规则快照。注意：不含 NSFW 过滤，UI / 编辑场景用；抓取相关一律用 [getVisible]。 */
     fun getAll(): List<SourceRule> = _rules.value
+
+    /**
+     * NSFW 屏蔽后的可见规则：数据源列表 / 聚合搜索 / 播放候选**统一走这里**。
+     *
+     * 「NSFW 内容屏蔽」开启时剔除所有 [SourceRule.nsfw] 规则（如 hanime1），
+     * 保证成人站点不只是「列表里不显示」，而是彻底不参与任何抓取。
+     */
+    fun getVisible(): List<SourceRule> {
+        val all = _rules.value
+        return if (!ContentPrefs.isNsfwBlocked()) all else all.filter { !it.nsfw }
+    }
 
     /** 按 id 查询。 */
     fun getById(id: String): SourceRule? = _rules.value.firstOrNull { it.id == id }
@@ -123,6 +135,18 @@ object SourceRuleRepository {
         return defaults.values.toList() + custom
     }
 
-    /** 默认内置规则：当前为空。XPath 源统一由「数据源订阅」提供，不再内置打包。 */
+    /**
+     * 默认内置规则：**纯规则描述**的站点（无对应 `AnimeSource` 实现）放在这里，
+     * 由 [SourceHolder] 派生为可选资源源，用户可在「数据源」里改域名但不能删除。
+     *
+     * Silisili / Girigiri 虽有 [BuiltInSourceRules] 工厂，但它们是「在 [SourceHolder]
+     * 里独立登记的资源源」，其规则由各自的 `AnimeSource` 内部按当前域名现取现用，
+     * 不进本仓库（否则会在数据源列表里重复出现两条同名源）。
+     *
+     * Hanime1 已改为 **API 资源数据源**（[com.example.tuanyingshi.data.remote.parse.Hanime1Source]，
+     * [com.example.tuanyingshi.util.SourceMode.Hanime1]），不再作为 CSS 规则源出现，
+     * 因此此处直接返回空（与上方注释「当前无内置规则」一致）。XPath 源仍统一由
+     * 「数据源订阅」提供，不在此内置打包。
+     */
     private fun builtInRules(): List<SourceRule> = emptyList()
 }

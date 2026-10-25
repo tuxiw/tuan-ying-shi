@@ -42,7 +42,7 @@ class RuleAggregateAnimeSource : AnimeSource {
     override var WEB_URL: String = ""
 
     private val allRules: List<SourceRule>
-        get() = SourceRuleRepository.getAll()
+        get() = SourceRuleRepository.getVisible()
 
     companion object {
         /** 单个 CSS 源抓取的最长等待时间，超时直接跳过，避免一个坏源拖垮整体。 */
@@ -55,6 +55,11 @@ class RuleAggregateAnimeSource : AnimeSource {
         private const val PER_SOURCE_SEARCH_TIMEOUT_MS = 30_000L
         /** 同时并发的 CSS 源数量上限，平衡速度与 WebView 资源占用。 */
         private const val MAX_CONCURRENCY = 4
+        /**
+         * 详情页按标题匹配时，单个候选下钻详情的最长等待。
+         * 详情页 WebView 兜底超时 8s，这里给足余量，避免慢源被过早取消。
+         */
+        private const val PER_DETAIL_TIMEOUT_MS = 15_000L
     }
 
     // ── 浏览类：始终次元城 API ──
@@ -63,7 +68,7 @@ class RuleAggregateAnimeSource : AnimeSource {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,
@@ -203,11 +208,13 @@ class RuleAggregateAnimeSource : AnimeSource {
             .sortedWith(compareByDescending<Triple<SourceRule, RuleExecutor.SearchResult, Int>> { it.third }
                 .thenBy { it.first.tier })
             .take(5)
-        for ((rule, entry) in ranked) {
-            val detail = runCatching { RuleExecutor.getAnimeDetail(rule, entry.url) }.getOrNull()
-            if (detail != null && detail.title.isNotBlank()) return detail to rule
+        // 并发下钻 top-N 候选的详情页，首个拿到有效标题者即返回（最快到达优先），
+        // 取代原先逐个串行的写法——串行时每个候选都可能是一次 8s WebView，叠加极慢。
+        val detail = runParallelFirstNotNull(ranked, PER_DETAIL_TIMEOUT_MS) { (rule, entry) ->
+            runCatching { RuleExecutor.getAnimeDetail(rule, entry.url) }.getOrNull()
+                ?.takeIf { it.title.isNotBlank() }?.let { it to rule }
         }
-        return null
+        return detail
     }
 
     // ── 并发工具 ──
@@ -233,13 +240,17 @@ class RuleAggregateAnimeSource : AnimeSource {
         }
 
     /** 并发执行，返回首个非 null 结果（超时/异常视为 null，未命中任务被取消）。 */
-    private suspend fun <T, R> runParallelFirstNotNull(items: List<T>, block: suspend (T) -> R?): R? =
+    private suspend fun <T, R> runParallelFirstNotNull(
+        items: List<T>,
+        timeoutMs: Long = PER_SOURCE_TIMEOUT_MS,
+        block: suspend (T) -> R?,
+    ): R? =
         coroutineScope {
             val sem = Semaphore(MAX_CONCURRENCY)
             items.map { item ->
                 async(Dispatchers.IO) {
                     sem.withPermit {
-                        withTimeoutOrNull(PER_SOURCE_TIMEOUT_MS) { block(item) }
+                        withTimeoutOrNull(timeoutMs) { block(item) }
                     }
                 }
             }.firstNotNullOfOrNull { it.await() }

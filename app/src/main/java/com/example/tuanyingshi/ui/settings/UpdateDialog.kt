@@ -71,16 +71,23 @@ private fun UpdateAvailableDialog(info: UpdateInfo, onDismiss: () -> Unit) {
         confirmButton = {
             TextButton(onClick = {
                 if (UpdatePrefs.inAppUpdate.value) {
-                    // 应用内更新：后台下载 + 通知栏进度（不受本弹窗关闭影响）
                     val target = UpdateChecker.pickInAppUpdate(info, context)
                     if (target != null) {
-                        UpdateDownloader.startBackgroundDownload(
-                            context,
-                            target.url,
-                            target.fileName,
-                            target.channel,
-                            UpdateChecker.formatVersion(info.version),
-                        )
+                        // 本地已存在该版本的安装包 → 跳过下载直接安装，避免重复下载
+                        val existing = UpdateDownloader.findExistingApk(context, target.fileName)
+                        if (existing != null) {
+                            UpdateDownloader.install(context, existing)
+                        } else {
+                            // 应用内更新：后台下载 + 通知栏进度（不受本弹窗关闭影响），
+                            // 下载完成后由 UpdateDownloadService 自动打开安装器
+                            UpdateDownloader.startBackgroundDownload(
+                                context,
+                                target.url,
+                                target.fileName,
+                                target.channel,
+                                UpdateChecker.formatVersion(info.version),
+                            )
+                        }
                     } else {
                         // 应用内无对应安装包：回退到网页下载页
                         val web = UpdateChecker.pickFallbackWebUrl(info)

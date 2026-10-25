@@ -3,6 +3,7 @@ package com.example.tuanyingshi.ui.home.components
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,8 +41,13 @@ import com.example.tuanyingshi.ui.components.LocalUserStatusRepository
 /**
  * 「热播日漫推荐」区块的小卡片（3 列网格）。
  * - 封面 3:4 竖版
- * - 右下"更新至XX集"半透明黑底徽标
+ * - 海报底部一行徽标：来源名（可选）+「更新至XX集」半透明黑底徽标；
+ *   二者同行左起排列，集数徽标只占剩余空间并单行省略，
+ *   窄列（平板多列）下绝不互相压字（曾出现「Girigiri 3集 / 22:30」串字）
  * - 标题最多 2 行
+ *
+ * @param showSource 是否展示来源名徽标：聚合搜索等多源场景才需要；
+ *   单源首页（推荐页各区块均来自当前数据源）传 false，避免每张卡片重复同一个来源名。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -49,6 +55,7 @@ fun HotAnimeCard(
     anime: Anime,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showSource: Boolean = true,
 ) {
     var showAbandon by remember { mutableStateOf(false) }
     val canAbandon = LocalUserStatusRepository.current != null
@@ -75,49 +82,60 @@ fun HotAnimeCard(
                 contentScale = ContentScale.Crop,
             )
             val epBadge = anime.episodeBadge
-            if (epBadge.isNotEmpty()) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.55f),
-                    shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp),
-                ) {
-                    Text(
-                        text = epBadge,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                    )
-                }
-            }
-            if (anime.sourceName.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(4.dp),
+            val showSourceBadge = showSource && anime.sourceName.isNotEmpty()
+            if (epBadge.isNotEmpty() || showSourceBadge) {
+                // 底部徽标行：来源名 + 集数同行左起排列，集数徽标只占剩余空间并单行省略，
+                // 避免窄列（平板多列）下两枚徽标互相压字（曾出现「Girigiri 3集 / 22:30」串字）。
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .fillMaxWidth()
                         .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                    ) {
-                        if (anime.iconUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = anime.iconUrl,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp).clip(CircleShape),
-                            )
-                            Spacer(Modifier.width(3.dp))
+                    if (showSourceBadge) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                            shape = RoundedCornerShape(4.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            ) {
+                                if (anime.iconUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = anime.iconUrl,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp).clip(CircleShape),
+                                    )
+                                    Spacer(Modifier.width(3.dp))
+                                }
+                                Text(
+                                    text = anime.sourceName,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
-                        Text(
-                            text = anime.sourceName,
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    }
+                    if (epBadge.isNotEmpty()) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.weight(1f, fill = false),
+                        ) {
+                            Text(
+                                text = epBadge,
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            )
+                        }
                     }
                 }
             }

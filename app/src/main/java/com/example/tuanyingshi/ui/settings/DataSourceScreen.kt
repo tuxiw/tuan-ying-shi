@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -21,9 +23,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,12 +50,14 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -86,6 +93,8 @@ import com.example.tuanyingshi.util.source_rule.CaptchaType
 import com.example.tuanyingshi.util.source_rule.SourceSubscription
 import com.example.tuanyingshi.util.ResourceSource
 import com.example.tuanyingshi.util.SourceMode
+import com.example.tuanyingshi.util.SmartSourcePrefs
+import com.example.tuanyingshi.util.NetworkType
 import com.example.tuanyingshi.util.label
 import com.example.tuanyingshi.ui.components.rememberCaptchaInputHost
 import com.example.tuanyingshi.ui.navigation.Screen
@@ -132,6 +141,9 @@ fun DataSourceScreen(
         onAnalyze = { ruleId ->
             navController.navigate(Screen.SourceAnalysis.create(ruleId))
         },
+        onNavigateLogin = { pendingSourceId ->
+            navController.navigate(Screen.CycaniLogin.create(pendingSourceId = pendingSourceId))
+        },
         modifier = Modifier.fillMaxSize().padding(inner),
     )
     }
@@ -146,6 +158,8 @@ fun DataSourceScreenContent(
     viewModel: SettingsViewModel,
     onOpenRuleEditor: (String?, RuleEngineKind?) -> Unit = { _, _ -> },
     onAnalyze: (String?) -> Unit = {},
+    /** 未登录点击次元城源时跳转登录页（参数为待切换的源 id）。 */
+    onNavigateLogin: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -155,6 +169,11 @@ fun DataSourceScreenContent(
     val verifyCandidates by viewModel.verifyCandidates.collectAsStateWithLifecycle()
     val verifyingIds by viewModel.verifyingIds.collectAsStateWithLifecycle()
     val verifyMessage by viewModel.verifyMessage.collectAsStateWithLifecycle()
+    // 智能切换数据源偏好
+    val smartEnabled by SmartSourcePrefs.enabled.collectAsStateWithLifecycle()
+    val smartWifiId by SmartSourcePrefs.wifiSourceId.collectAsStateWithLifecycle()
+    val smartCellularId by SmartSourcePrefs.cellularSourceId.collectAsStateWithLifecycle()
+    val smartEthernetId by SmartSourcePrefs.ethernetSourceId.collectAsStateWithLifecycle()
     var showAddTypeDialog by remember { mutableStateOf(false) }
     var showAddSubDialog by remember { mutableStateOf(false) }
     var sortAscending by remember { mutableStateOf<Boolean?>(null) }
@@ -170,10 +189,14 @@ fun DataSourceScreenContent(
     }
 
     Box(modifier) {
-        // 选择数据（API 源 + 「弹弹play」聚合虚拟源）；聚合源 type==Rule 但 aggregateCss=true
-        val apiSources = state.sources.filter { it.type != SourceMode.Rule || it.aggregateCss }
-        // CSS 源：全部规则源（订阅 + 用户添加），聚合虚拟源除外
-        val cssSources = state.sources.filter { it.type == SourceMode.Rule && !it.aggregateCss }
+        // 内置规则源（如 hanime1）：可当主数据源，归入主列表；外部列表只保留订阅 / 用户规则，行为不变。
+        val isBuiltInRule: (ResourceSource) -> Boolean = { it.ruleId != null && it.isBuiltIn && !it.aggregateCss }
+        // 选择数据（API 源 + 「弹弹play」聚合虚拟源 + 内置规则源）；聚合源 type==Rule 但 aggregateCss=true
+        val apiSources = state.sources.filter { it.type != SourceMode.Rule || it.aggregateCss || isBuiltInRule(it) }
+        // CSS 源：订阅 / 用户自定义规则源（内置规则源已上移到主列表），聚合虚拟源除外
+        val cssSources = state.sources.filter {
+            it.type == SourceMode.Rule && !it.aggregateCss && !isBuiltInRule(it)
+        }
         // 选择数据：默认按角标标签分组排序（API源 在前，CSS源 在后，标签相同的保持原有顺序），
         // 点击排序按钮时再切换为按名称升 / 降序。
         val sortFn: (List<ResourceSource>) -> List<ResourceSource> = { list ->
@@ -197,6 +220,19 @@ fun DataSourceScreenContent(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            // ───────────────── 智能切换数据源（根据当前网络自动选择） ─────────────────
+            item {
+                SmartSwitchSection(
+                    enabled = smartEnabled,
+                    wifiId = smartWifiId,
+                    cellularId = smartCellularId,
+                    ethernetId = smartEthernetId,
+                    sources = state.sources,
+                    onToggle = { SmartSourcePrefs.setEnabled(it) },
+                    onPick = { type, id -> SmartSourcePrefs.setNetworkSourceId(type, id) },
+                )
+            }
+
             // ───────────────── 数据源订阅区域 ─────────────────
             item {
                 SectionHeader(
@@ -293,24 +329,27 @@ fun DataSourceScreenContent(
 
             when (selectedTab) {
                 0 -> items(displayedApiSources, key = { it.id }) { source ->
+                    // 规则源（内置）落到主列表时，编辑 / 删除要走规则仓库而非域名编辑弹窗
+                    val ruleId = source.ruleId
                     SourceItem(
                         source = source,
                         isDefault = source.id == state.currentSourceId,
                         selectable = true,
                         cycaniLoginState = if (source.type == SourceMode.Cycanime) state.cycaniLoginState else null,
                         onSelect = { viewModel.selectSource(source.id) },
-                        onEdit = { viewModel.requestEdit(source) },
-                        onDelete = { viewModel.requestDelete(source) },
-                        onAnalyze = {},
+                        onEdit = {
+                            if (ruleId != null) onOpenRuleEditor(ruleId, null) else viewModel.requestEdit(source)
+                        },
+                        onDelete = {
+                            if (ruleId != null) viewModel.deleteRuleSource(ruleId) else viewModel.requestDelete(source)
+                        },
+                        onAnalyze = { ruleId?.let { onAnalyze(it) } },
+                        onLogout = { viewModel.logout() },
                     )
                 }
                 1 -> items(displayedCssSources, key = { it.id }) { source ->
-                    SourceItem(
+                    RuleSourceItem(
                         source = source,
-                        isDefault = false,
-                        selectable = false,
-                        cycaniLoginState = null,
-                        onSelect = {},
                         onEdit = { onOpenRuleEditor(source.ruleId, null) },
                         onDelete = { viewModel.deleteRuleSource(source.ruleId ?: "") },
                         onAnalyze = { onAnalyze(source.ruleId) },
@@ -321,13 +360,13 @@ fun DataSourceScreenContent(
             item { Spacer(Modifier.height(8.dp)) }
         }
 
-        if (state.showLoginDialog) {
-            CycaniLoginDialog(
-                isLoading = state.isLoggingIn,
-                error = state.loginError,
-                onDismiss = { viewModel.dismissLoginDialog() },
-                onLogin = { username, password -> viewModel.login(username, password) },
-            )
+        // 未登录点击了次元城源：跳转全屏登录页（带上待切换的源 id，登录成功自动切回）
+        LaunchedEffect(state.showLoginDialog, state.pendingSourceId) {
+            if (state.showLoginDialog && state.pendingSourceId != null) {
+                val pending = state.pendingSourceId.orEmpty()
+                viewModel.dismissLoginDialog()
+                onNavigateLogin(pending)
+            }
         }
 
         if (editorOpen) {
@@ -427,14 +466,126 @@ fun DataSourceScreenContent(
     }
 }
 
+/** 智能切换数据源卡片：总开关 + 各网络类型（WiFi / 移动数据 / 以太网）的数据源选择。 */
+@Composable
+private fun SmartSwitchSection(
+    enabled: Boolean,
+    wifiId: String?,
+    cellularId: String?,
+    ethernetId: String?,
+    sources: List<ResourceSource>,
+    onToggle: (Boolean) -> Unit,
+    onPick: (NetworkType, String?) -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "智能切换数据源",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "根据当前网络自动选择数据源（WiFi / 移动数据 / 以太网）",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+                Switch(checked = enabled, onCheckedChange = onToggle)
+            }
+            if (enabled) {
+                Spacer(Modifier.height(8.dp))
+                NetworkSourceRow("WiFi", NetworkType.WIFI, wifiId, sources, onPick)
+                NetworkSourceRow("移动数据", NetworkType.CELLULAR, cellularId, sources, onPick)
+                NetworkSourceRow("以太网", NetworkType.ETHERNET, ethernetId, sources, onPick)
+            }
+        }
+    }
+}
+
+/** 单行：网络类型 + 当前绑定数据源（下拉选择，含「自动选择」）。 */
+@Composable
+private fun NetworkSourceRow(
+    label: String,
+    type: NetworkType,
+    selectedId: String?,
+    sources: List<ResourceSource>,
+    onPick: (NetworkType, String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentName = if (selectedId == null) {
+        "自动选择"
+    } else {
+        sources.firstOrNull { it.id == selectedId }?.name ?: "自动选择"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 13.sp,
+            modifier = Modifier.width(72.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = currentName,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 14.sp,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenuItem(
+            text = { Text("自动选择") },
+            onClick = { expanded = false; onPick(type, null) },
+        )
+        sources.forEach { rs ->
+            DropdownMenuItem(
+                text = { Text(rs.name) },
+                onClick = { expanded = false; onPick(type, rs.id) },
+            )
+        }
+    }
+}
+
 /** 「选择数据」Tab 默认分组依据：返回该源在默认排序中的优先级（越小越靠前）。
- * 与 [SourceItem] 的角标逻辑保持一致：API源=0，XPATH源=1，CSS源=2。 */
+ *
+ * 固定顺序：次元城 > Girigiri > 嘶哩嘶哩 > 弹弹play > Hanime1，其余按引擎归类
+ * （XPATH源 → CSS源 → 兜底）。与 [SourceItem] 的角标逻辑保持一致。 */
 private fun apiTagPriority(source: ResourceSource): Int = when {
-    source.aggregateCss -> 0
-    source.engine == RuleEngineKind.Xpath -> 1
-    source.engine == RuleEngineKind.Css -> 2
     source.type == SourceMode.Cycanime -> 0
-    else -> 2
+    source.type == SourceMode.Girigiri -> 1
+    source.type == SourceMode.Silisili -> 2
+    source.aggregateCss -> 3
+    source.type == SourceMode.Hanime1 -> 4
+    source.engine == RuleEngineKind.Xpath -> 5
+    source.engine == RuleEngineKind.Css -> 6
+    else -> 7
 }
 
 @Composable
@@ -621,6 +772,7 @@ private fun SourceItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onAnalyze: () -> Unit,
+    onLogout: () -> Unit,
 ) {
     val isLoggedIn = cycaniLoginState is CycaniLoginState.LoggedIn
     val accountLabel = (cycaniLoginState as? CycaniLoginState.LoggedIn)?.let {
@@ -688,18 +840,30 @@ private fun SourceItem(
                         )
                     }
                     Spacer(Modifier.width(6.dp))
-                    // 类型角标：XPATH源（Xpath 引擎规则）/ CSS源（Css 引擎规则）/ API源（次元城 或 弹弹play 聚合源）
+                    // 类型角标：XPATH源（Xpath 引擎规则）/ CSS源（Css 引擎规则）/ API源（原生 API 客户端源：
+                    // 次元城、Girigiri、Hanime1 与弹弹play 聚合源）
                     TagBadge(
                         text = when {
                             source.engine == RuleEngineKind.Xpath -> "XPATH源"
                             source.aggregateCss -> "API源"
                             source.engine == RuleEngineKind.Css -> "CSS源"
                             source.type == SourceMode.Cycanime -> "API源"
+                            source.type == SourceMode.Girigiri -> "API源"
+                            source.type == SourceMode.Hanime1 -> "API源"
                             else -> "CSS源"
                         },
                         color = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
+                    // 成人站点源：仅在「NSFW 内容屏蔽」关闭时才可能出现于此 → 打 NSFW 标签
+                    if (source.nsfw) {
+                        Spacer(Modifier.width(6.dp))
+                        TagBadge(
+                            text = "NSFW",
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
                     if (source.type != SourceMode.Rule || source.aggregateCss) {
                         Spacer(Modifier.width(6.dp))
                         // 来源角标：内置 / 自定义（API 源与弹弹play 聚合源展示，内置标识置于第二位）
@@ -734,6 +898,7 @@ private fun SourceItem(
                             ?: when {
                                 source.aggregateCss -> "API 获取番剧资源，视频借外部 CSS 源"
                                 source.engine == RuleEngineKind.Xpath -> "XPATH源（自定义规则）"
+                                source.type == SourceMode.Rule && source.isBuiltIn -> "CSS源（内置规则，可作主数据源）"
                                 source.type == SourceMode.Rule -> "CSS源（自定义规则）"
                                 else -> source.type.label()
                             },
@@ -760,6 +925,7 @@ private fun SourceItem(
                 onEdit = onEdit,
                 onDelete = onDelete,
                 onAnalyze = onAnalyze,
+                onLogout = onLogout,
             )
         }
     }
@@ -767,8 +933,10 @@ private fun SourceItem(
 
 /**
  * 单个数据源项的「更多」菜单：
- * - API 源：选择资源 / 弹弹play（API 源）/ 编辑 / 删除 /（次元城已登录）退出登录
- * - CSS 源：编辑 / 删除
+ * - API 源：选择资源 / 弹弹play（API 源）/ 编辑（内置源也可编辑——设置镜像网址）/ 删除 /
+ *   （次元城已登录）退出登录
+ * - CSS 源：编辑（规则编辑器）/ 删除
+ * - 弹弹play 聚合虚拟源：无独立域名，「编辑」禁用
  */
 @Composable
 private fun SourceItemMoreMenu(
@@ -783,6 +951,7 @@ private fun SourceItemMoreMenu(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onAnalyze: () -> Unit,
+    onLogout: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -817,7 +986,9 @@ private fun SourceItemMoreMenu(
             }
             DropdownMenuItem(
                 text = { Text("编辑") },
-                enabled = !isBuiltIn && !isAggregate,
+                // 编辑入口按 onEdit 的路由开放：规则源 → 规则编辑器；API 源（含内置，
+                // 用于设置镜像网址）→ 域名编辑弹窗。仅弹弹play 聚合虚拟源无独立域名可改。
+                enabled = !isAggregate,
                 onClick = {
                     menuExpanded = false
                     onEdit()
@@ -867,7 +1038,7 @@ private fun SourceItemMoreMenu(
                     text = { Text("退出登录") },
                     onClick = {
                         menuExpanded = false
-                        onSelect()
+                        onLogout()
                     },
                     leadingIcon = {
                         Icon(
@@ -878,6 +1049,119 @@ private fun SourceItemMoreMenu(
                     },
                 )
             }
+        }
+    }
+}
+
+/**
+ * CSS / XPATH 规则源紧凑行（参考「选择数据源」面板样式）：
+ * 图标 + 名称一行，下方轻量 chip（引擎类型 / 订阅·自定义）+ 域名小字；右侧保留三点菜单。
+ * 相比通用 [SourceItem] 去掉了大卡片描述行，外部资源列表更紧凑。
+ */
+@Composable
+private fun RuleSourceItem(
+    source: ResourceSource,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onAnalyze: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 图标：远程规则图标，缺省用圆形占位
+            if (source.iconUrl.isNotBlank()) {
+                AsyncImage(
+                    model = source.iconUrl,
+                    contentDescription = source.name,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.Code,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = source.name,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TagBadge(
+                        text = if (source.engine == RuleEngineKind.Xpath) "XPATH" else "CSS",
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    if (source.subscriptionId.isNotBlank()) {
+                        Spacer(Modifier.width(6.dp))
+                        TagBadge(
+                            text = "订阅",
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    } else if (!source.isBuiltIn) {
+                        Spacer(Modifier.width(6.dp))
+                        TagBadge(
+                            text = "自定义",
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (source.baseUrl.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = source.baseUrl,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            SourceItemMoreMenu(
+                isDefault = false,
+                isBuiltIn = source.isBuiltIn,
+                selectable = false,
+                isLoggedIn = false,
+                sourceType = source.type,
+                isAggregate = source.aggregateCss,
+                ruleId = source.ruleId,
+                onSelect = {},
+                onEdit = onEdit,
+                onDelete = onDelete,
+                onAnalyze = onAnalyze,
+                onLogout = {},
+            )
         }
     }
 }
@@ -1203,7 +1487,15 @@ private fun SourceVerifyDialog(
 /**
  * 资源源新增 / 编辑弹窗。
  * [editing] 为 null 表示新增；非 null 表示编辑（预填名称 / 类型 / 域名，保留内置标记）。
+ *
+ * 解析器类型用**内联单选 chips** 而非下拉菜单：AlertDialog 内的弹出菜单在部分机型上
+ * 被对话框窗口裁切 / 手势被输入框吞掉，表现为「选不了其他解析器类型」；内联 chips
+ * 无弹出层，稳定且更直观。
+ *
+ * 内置源（[editing.isBuiltIn]）锁定解析器类型——换类型等于换一个源而不是镜像，
+ * 仅允许改名称与镜像网址（域名）；删除仍由菜单禁止。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceEditorDialog(
     editing: ResourceSource?,
@@ -1213,8 +1505,11 @@ private fun SourceEditorDialog(
     var name by remember { mutableStateOf(editing?.name ?: "") }
     var baseUrl by remember { mutableStateOf(editing?.baseUrl ?: "") }
     var type by remember { mutableStateOf(editing?.type ?: SourceMode.Silisili) }
-    var typeMenuExpanded by remember { mutableStateOf(false) }
     var nameError by remember { mutableStateOf<String?>(null) }
+    // 内置源：解析器类型固定（防御性判断：聚合源/规则源本就走不到这个弹窗）
+    val typeLocked = editing != null && editing.isBuiltIn
+    val isBuiltInApi =
+        editing != null && editing.isBuiltIn && !editing.aggregateCss && editing.ruleId == null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1226,7 +1521,7 @@ private fun SourceEditorDialog(
                         return@TextButton
                     }
                     if (baseUrl.isBlank()) {
-                        nameError = "请输入域名"
+                        nameError = if (isBuiltInApi) "请输入镜像网址" else "请输入域名"
                         return@TextButton
                     }
                     onSave(name.trim(), type, baseUrl.trim())
@@ -1238,7 +1533,8 @@ private fun SourceEditorDialog(
         },
         title = { Text(if (editing == null) "添加资源源" else "编辑资源源") },
         text = {
-            Column {
+            // 字段较多（名称 + 类型 chips + 域名 + 提示语），小屏下加滚动兜底防按钮被裁切
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it; nameError = null },
@@ -1249,42 +1545,46 @@ private fun SourceEditorDialog(
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // 解析器类型选择
-                Box {
-                    OutlinedTextField(
-                        value = type.label(),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("解析器类型") },
-                        trailingIcon = {
-                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { typeMenuExpanded = true },
-                    )
-                    DropdownMenu(
-                        expanded = typeMenuExpanded,
-                        onDismissRequest = { typeMenuExpanded = false },
-                    ) {
-                        SourceMode.entries.filter { it != SourceMode.Rule }.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(mode.label()) },
-                                onClick = {
-                                    type = mode
-                                    typeMenuExpanded = false
-                                },
-                            )
-                        }
+                // 解析器类型（内联单选 chips，无弹出层）
+                Text(
+                    text = "解析器类型",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SourceMode.entries.filter { it != SourceMode.Rule }.forEach { mode ->
+                        FilterChip(
+                            selected = type == mode,
+                            onClick = { if (!typeLocked) type = mode },
+                            enabled = !typeLocked,
+                            label = { Text(mode.label()) },
+                        )
                     }
+                }
+                if (typeLocked) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "内置源的解析器类型固定，仅可修改名称与镜像网址。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = baseUrl,
                     onValueChange = { baseUrl = it },
-                    label = { Text("域名") },
-                    placeholder = { Text("例如 https://www.example.com") },
+                    label = { Text(if (isBuiltInApi) "镜像网址" else "域名") },
+                    placeholder = {
+                        Text(
+                            if (isBuiltInApi) "例如 https://mirror.example.com"
+                            else "例如 https://www.example.com"
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1296,10 +1596,10 @@ private fun SourceEditorDialog(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (editing?.isBuiltIn == true) {
+                if (isBuiltInApi) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "该源为内置源，可修改名称与域名，但不可删除。",
+                        text = "该源为内置源，可修改名称与镜像网址（域名不可用时改用镜像访问），但不可删除。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -1309,79 +1609,3 @@ private fun SourceEditorDialog(
     )
 }
 
-/**
- * 次元城登录弹窗：账号 + 密码 + 错误提示 + 加载圈。
- */
-@Composable
-private fun CycaniLoginDialog(
-    isLoading: Boolean,
-    error: String?,
-    onDismiss: () -> Unit,
-    onLogin: (String, String) -> Unit,
-) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = { if (!isLoading) onDismiss() },
-        confirmButton = {
-            TextButton(
-                onClick = { onLogin(username, password) },
-                enabled = !isLoading,
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("登录")
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !isLoading,
-            ) { Text("取消") }
-        },
-        title = { Text("登录次元城") },
-        text = {
-            Column {
-                Text(
-                    text = "切换到次元城数据源需要先登录源站账号。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("账号") },
-                    singleLine = true,
-                    enabled = !isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("密码") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    enabled = !isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (error != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        },
-    )
-}

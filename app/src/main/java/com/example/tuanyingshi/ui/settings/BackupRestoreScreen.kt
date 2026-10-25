@@ -73,7 +73,8 @@ import java.util.Locale
 
 /**
  * 备份与恢复页（设置 → 数据 → 备份与恢复）：
- * - 导出：勾选要备份的分类（个性化 / 通知与提醒 / 数据源与订阅 / 账号会话），经 SAF 另存为 JSON。
+ * - 导出：勾选要备份的分类（个性化与播放设置 / 通知与提醒 / 数据源与弹幕源 / 网络代理 /
+ *   后端模式 / 账号会话），经 SAF 另存为 JSON。
  * - 恢复：经 SAF 选取文件，先校验合法性并展示范围/时间，确认后再写回并重启。
  * - 自动备份：开启后按间隔在应用私有 Download 目录生成全量备份，可一键从历史恢复。
  * - 跨设备同步 (WebDAV)：对接 WebDAV 服务器，手机/平板之间通过 newer-wins 双向同步配置。
@@ -309,7 +310,8 @@ fun BackupRestoreContent() {
     SectionTitle("导出配置")
     Text(
         text = "将选中的配置分类导出为 JSON 文件，可分享或留存。「通知与提醒」包含下载通知与离线模式提示开关；" +
-            "「账号会话」包含登录令牌与代理密码等敏感信息。",
+            "「数据源与弹幕源」包含数据源规则、订阅、当前选中源与弹弹 play 配置。" +
+            "「账号会话」「后端模式」「网络代理」分别含次元城登录令牌、后端地址与令牌、代理密码等敏感信息，请妥善保管。",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -870,7 +872,11 @@ fun BackupRestoreContent() {
     HorizontalDivider()
     Spacer(Modifier.height(12.dp))
     Text(
-        text = "注意：导出文件包含账号会话、代理密码等敏感信息，请妥善保管，避免泄露。自动备份保存在应用私有 Download 目录，无需存储权限。WebDAV 同步文件同样包含完整配置，请确保服务器可信并使用 HTTPS。设备直连同步仅在同一局域网内有效，配对码用于防止陌生设备误连。",
+        text = "注意：导出文件可能包含账号会话、后端令牌、代理密码、WebDAV 密码等敏感信息，请妥善保管，避免泄露。" +
+            "自动备份保存在应用私有 Download 目录，无需存储权限。" +
+            "WebDAV 同步文件同样包含完整配置，请确保服务器可信并使用 HTTPS。" +
+            "设备直连同步仅在同一局域网内有效，配对码用于防止陌生设备误连。" +
+            "设备标识（device_id）不会随备份恢复，各设备保留自身身份。",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

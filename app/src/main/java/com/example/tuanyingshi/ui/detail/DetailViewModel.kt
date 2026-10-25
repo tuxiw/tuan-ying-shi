@@ -9,12 +9,14 @@ import com.example.tuanyingshi.data.local.entity.HistoryEntity
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.data.remote.backend.FeedbackRequestDTO
 import com.example.tuanyingshi.data.remote.backend.RatingRequestDTO
+import com.example.tuanyingshi.data.repository.UserRatingRepository
 import com.example.tuanyingshi.data.repository.FavoriteRepository
 import com.example.tuanyingshi.data.repository.HistoryRepository
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.model.AnimeDetail
 import com.example.tuanyingshi.domain.model.Episode
 import com.example.tuanyingshi.domain.model.SourceCandidate
+import com.example.tuanyingshi.domain.model.SourceQueryState
 import com.example.tuanyingshi.domain.repository.AnimeRepository
 import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.Resource
@@ -38,6 +40,7 @@ class DetailViewModel @Inject constructor(
     private val animeRepository: AnimeRepository,
     private val favoriteRepository: FavoriteRepository,
     private val historyRepository: HistoryRepository,
+    private val userRatingRepository: UserRatingRepository,
 ) : ViewModel() {
 
     /** 详情页地址（导航路由参数，URL 编码后传递，此处为解码后的原始链接）。 */
@@ -68,6 +71,13 @@ class DetailViewModel @Inject constructor(
     private val _sourceName = MutableStateFlow("")
     val sourceName: StateFlow<String> = _sourceName.asStateFlow()
 
+    /**
+     * 当前生效的数据源 id（初始来自导航参数，换源后跟随用户选择）。
+     * 播放页导航时带上它，保证播放页按同一个源解析详情 / 选集。
+     */
+    private val _currentSourceId = MutableStateFlow(sourceId)
+    val currentSourceId: StateFlow<String> = _currentSourceId.asStateFlow()
+
     /** 提供本详情数据的来源图标 URL（CSS 规则源才有，回退到当前资源源图标）。 */
     private val _iconUrl = MutableStateFlow("")
     val iconUrl: StateFlow<String> = _iconUrl.asStateFlow()
@@ -82,6 +92,25 @@ class DetailViewModel @Inject constructor(
     /** 所有可用 CSS 源候选（「数据源」选择器用），由 [loadSourceCandidates] 填充。 */
     private val _sourceCandidates = MutableStateFlow<List<SourceCandidate>>(emptyList())
     val sourceCandidates: StateFlow<List<SourceCandidate>> = _sourceCandidates.asStateFlow()
+
+    // ── 查询进度（数据源选择器「详细模式」用） ──
+    /** 各源查询状态快照。 */
+    private val _queryStates = MutableStateFlow<List<SourceQueryState>>(emptyList())
+    val queryStates: StateFlow<List<SourceQueryState>> = _queryStates.asStateFlow()
+
+    /** 已完成查询的源数 / 总源数。 */
+    private val _queriedCount = MutableStateFlow(0)
+    val queriedCount: StateFlow<Int> = _queriedCount.asStateFlow()
+
+    private val _queryTotal = MutableStateFlow(0)
+    val queryTotal: StateFlow<Int> = _queryTotal.asStateFlow()
+
+    /** 用户编辑过的查询请求（主搜索名 / 次要搜索名）；null 表示跟随番剧标题。 */
+    private var queryTitle: String? = null
+    private var queryAliases: List<String> = emptyList()
+
+    /** 当前生效的主搜索名（编辑查询请求弹窗回显用）。 */
+    fun currentSearchTitle(): String = queryTitle ?: _detail.value?.title.orEmpty()
 
     private val _isFavorite = MutableStateFlow(false)
     val isFavorite: StateFlow<Boolean> = _isFavorite.asStateFlow()
@@ -149,6 +178,7 @@ class DetailViewModel @Inject constructor(
                     val rs = SourceHolder.getResourceSource(SourceHolder.currentSourceId)
                     _sourceName.value = d?.sourceName?.takeIf { it.isNotBlank() } ?: rs?.name ?: ""
                     _iconUrl.value = d?.iconUrl?.takeIf { it.isNotBlank() } ?: rs?.iconUrl ?: ""
+                    _currentSourceId.value = d?.sourceId?.takeIf { it.isNotBlank() } ?: sourceId
                     d?.let { recordBrowse(it) }
                 }
                 is Resource.Error -> {
@@ -165,17 +195,27 @@ class DetailViewModel @Inject constructor(
         loadMyRating()
     }
 
-    /** 拉取当前用户对该番剧的评分（后端模式 + 已登录时有效）。 */
+    /**
+     * 回填「我的评分」：
+     * - 后端模式 + 已登录：读后端（10 分制 → 5 星制）；
+     * - 其他模式（含本地数据源）：读本地评分表（星级 5 星制）。
+     */
     private fun loadMyRating() {
-        if (!BackendPrefs.isBackendMode() || !BackendPrefs.isLoggedIn || detailUrl.isBlank()) return
+        if (detailUrl.isBlank()) return
+        if (BackendPrefs.isBackendMode() && BackendPrefs.isLoggedIn) {
+            viewModelScope.launch {
+                val score = runCatching { BackendClient.api.myRating(detailUrl = detailUrl) }
+                    .getOrNull()
+                    ?.takeIf { it.ok }
+                    ?.data?.score
+                    ?: return@launch
+                // 后端存 10 分制，UI 用 5 星制
+                _userRating.value = (score / 2.0).toFloat()
+            }
+            return
+        }
         viewModelScope.launch {
-            val score = runCatching { BackendClient.api.myRating(detailUrl = detailUrl) }
-                .getOrNull()
-                ?.takeIf { it.ok }
-                ?.data?.score
-                ?: return@launch
-            // 后端存 10 分制，UI 用 5 星制
-            _userRating.value = (score / 2.0).toFloat()
+            _userRating.value = userRatingRepository.get(detailUrl)
         }
     }
 
@@ -187,11 +227,26 @@ class DetailViewModel @Inject constructor(
         _episodes.value = ch[index].orEmpty()
     }
 
-    /** 为「数据源」选择器构建所有可用 CSS 源候选（按标题搜索各源并取回线路）。 */
-    fun loadSourceCandidates() {
+    /**
+     * 为「数据源」选择器构建所有可用 CSS 源候选（按标题搜索各源并取回线路）。
+     *
+     * @param titleOverride 用户在「编辑查询请求」里改过的主搜索名；传非空值会覆盖番剧标题
+     *   并失效该标题的候选缓存。
+     * @param aliases 次要搜索名（与 [titleOverride] 一起生效）。
+     * @param force 为 true 时清除该标题的候选缓存强制重新查询（刷新按钮 / 修改请求后）；
+     *   默认缓存进程内长期有效，同一番剧重复打开选择器不重查（切换番剧=标题变化=重新搜索）。
+     */
+    fun loadSourceCandidates(
+        titleOverride: String? = null,
+        aliases: List<String>? = null,
+        force: Boolean = false,
+    ) {
         val detail = _detail.value ?: return
-        val title = detail.title
+        if (titleOverride != null && titleOverride.isNotBlank()) queryTitle = titleOverride.trim()
+        if (aliases != null) queryAliases = aliases
+        val title = queryTitle ?: detail.title
         if (title.isBlank()) return
+        if (force) SourceCandidateProvider.invalidate(title)
         // 当前源（详情页已成功加载）作为兜底候选，保证选择器至少 1 个可用源
         val current = if (detail.sourceId.isNotBlank() && _channels.value.isNotEmpty()) {
             SourceCandidate(
@@ -207,9 +262,17 @@ class DetailViewModel @Inject constructor(
             null
         }
         viewModelScope.launch(Dispatchers.IO) {
-            SourceCandidateProvider.buildFor(title, current) { list ->
-                _sourceCandidates.value = list
-            }
+            SourceCandidateProvider.buildFor(
+                title = title,
+                current = current,
+                aliases = queryAliases,
+                onUpdate = { list -> _sourceCandidates.value = list },
+                onProgress = { states, queried, total ->
+                    _queryStates.value = states
+                    _queriedCount.value = queried
+                    _queryTotal.value = total
+                },
+            )
         }
     }
 
@@ -223,6 +286,7 @@ class DetailViewModel @Inject constructor(
         _episodes.value = ch[line].orEmpty()
         _sourceName.value = candidate.sourceName
         _iconUrl.value = candidate.iconUrl
+        _currentSourceId.value = candidate.sourceId
         _channelsLoading.value = false
     }
 
@@ -242,13 +306,22 @@ class DetailViewModel @Inject constructor(
     /**
      * 提交用户评分（星级 1-5）。
      *
-     * <p>后端模式且已登录时上报后端（转 10 分制存储并跨设备同步）；否则仅本地会话级，
-     * 并通过 [message] 告知用户未同步。
+     * <p>后端模式且已登录时上报后端（转 10 分制存储并跨设备同步）；
+     * 其余模式（本地数据源等）写入本地评分表，「我的 → 我的评分」可查看。
      */
     fun setUserRating(rating: Float) {
         _userRating.value = rating
         if (!BackendPrefs.isBackendMode() || !BackendPrefs.isLoggedIn) {
-            _message.value = "已记录评分（本地模式，未同步到账号）"
+            val d = _detail.value
+            viewModelScope.launch {
+                userRatingRepository.save(
+                    detailUrl = detailUrl,
+                    title = d?.title?.takeIf { it.isNotBlank() } ?: detailUrl,
+                    imgUrl = d?.img.orEmpty(),
+                    rating = rating,
+                )
+            }
+            _message.value = "已记录评分（本地保存）"
             return
         }
         val d = _detail.value
@@ -278,6 +351,7 @@ class DetailViewModel @Inject constructor(
             historyRepository.recordBrowse(
                 anime = Anime(title = d.title, img = d.img, detailUrl = detailUrl),
                 mode = SourceHolder.currentSourceMode,
+                sourceName = _sourceName.value,
             )
         }
     }

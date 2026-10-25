@@ -9,6 +9,7 @@ import com.example.tuanyingshi.data.repository.ContentFilterRepository
 import com.example.tuanyingshi.util.Resource
 import com.example.tuanyingshi.util.SourceHolder
 import com.example.tuanyingshi.util.SourceMode
+import com.example.tuanyingshi.util.SmartSourceSwitcher
 import com.example.tuanyingshi.util.filterContent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -134,6 +135,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 is Resource.Error -> {
+                    // 智能切源：当前数据源加载失败时，提示并自动切到下一个可用源（首页会随源变化自动重载）
+                    SmartSourceSwitcher.reportFetchFailed(SourceHolder.currentSourceId)
                     _uiState.update {
                         it.copy(
                             loading = false,

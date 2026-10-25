@@ -10,6 +10,7 @@ import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.model.Comment
 import com.example.tuanyingshi.domain.model.Episode
 import com.example.tuanyingshi.domain.model.SourceCandidate
+import com.example.tuanyingshi.domain.model.SourceQueryState
 import com.example.tuanyingshi.domain.model.Video
 import com.example.tuanyingshi.domain.model.WebVideo
 import com.example.tuanyingshi.domain.repository.AnimeRepository
@@ -28,6 +29,8 @@ import com.example.tuanyingshi.util.source_rule.SourceRuleRepository
 import com.example.tuanyingshi.data.remote.parse.DandanplaySource
 import com.example.tuanyingshi.data.remote.parse.DandanplaySource.DanmakuResult
 import com.example.tuanyingshi.data.remote.parse.DandanplaySource.DanmakuSearchEntry
+import com.example.tuanyingshi.data.remote.api.cycani.CycaniAuthManager
+import com.example.tuanyingshi.data.remote.api.cycani.CycaniSessionExpiredException
 import com.example.tuanyingshi.data.remote.parse.BackendAnimeSource
 import com.example.tuanyingshi.data.remote.backend.BackendClient
 import com.example.tuanyingshi.data.remote.backend.CommentVO
@@ -47,9 +50,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -78,6 +84,19 @@ class PlayerViewModel @Inject constructor(
 
     private val detailUrl: String = savedStateHandle.get<String>("detailUrl").orEmpty()
     private val initialEpisodeUrl: String = savedStateHandle.get<String>("episodeUrl").orEmpty()
+
+    /**
+     * 详情页当前生效的源 id（CSS 规则源 / 资源源）：播放页按**同一源**解析详情与选集，
+     * 否则会回退到全局资源源（如「弹弹play」），导致两页数据源与选集不一致。
+     */
+    private val sourceId: String = savedStateHandle.get<String>("sourceId").orEmpty()
+
+    /**
+     * 详情页传入的 CSS 规则源（若确实是规则源）：首集解析直接 pin 到该规则，
+     * 避免首次播放被聚合源「重新匹配全部源」而取到别的源的视频。
+     */
+    private var preferredRuleId: String =
+        sourceId.takeIf { it.isNotBlank() && SourceRuleRepository.getById(it) != null } ?: ""
 
     /** 完整播放上下文：null = 加载中 / 失败。 */
     private val _video = MutableStateFlow<Video?>(null)
@@ -125,6 +144,20 @@ class PlayerViewModel @Inject constructor(
     private val _currentChannelIndex = MutableStateFlow(0)
     val currentChannelIndex: StateFlow<Int> = _currentChannelIndex.asStateFlow()
 
+    /**
+     * 当前生效的数据源名称 / 图标（「数据源·更换」卡片展示用）。
+     * 与 [_anime] 里首次加载的静态 sourceName 不同：手动换源 / 自动换源 / 详情页切源带来的
+     * 候选源定位都会更新这里，保证播放页展示与详情页选择一致。
+     */
+    private val _currentSourceName = MutableStateFlow("")
+    val currentSourceName: StateFlow<String> = _currentSourceName.asStateFlow()
+    private val _currentSourceIcon = MutableStateFlow("")
+    val currentSourceIcon: StateFlow<String> = _currentSourceIcon.asStateFlow()
+
+    /** 当前生效源 id（换源 / 候选定位同步更新；资源源回退全局 currentSourceId）。选择面板高亮用。 */
+    private val _currentSourceId = MutableStateFlow("")
+    val currentSourceId: StateFlow<String> = _currentSourceId.asStateFlow()
+
     private val _rawRelated = MutableStateFlow<List<Anime>>(emptyList())
 
     /** 相关动画（已按 NSFW 屏蔽 / 隐藏看过与抛弃 过滤）。 */
@@ -145,6 +178,28 @@ class PlayerViewModel @Inject constructor(
     /** 所有可用 CSS 源候选（播放器「换源」选择器用），由 [loadSourceCandidates] 填充。 */
     private val _sourceCandidates = MutableStateFlow<List<SourceCandidate>>(emptyList())
     val sourceCandidates: StateFlow<List<SourceCandidate>> = _sourceCandidates.asStateFlow()
+
+    // ── 查询进度（数据源选择器「详细模式」用） ──
+    /** 各源查询状态快照。 */
+    private val _queryStates = MutableStateFlow<List<SourceQueryState>>(emptyList())
+    val queryStates: StateFlow<List<SourceQueryState>> = _queryStates.asStateFlow()
+
+    /** 已完成查询的源数 / 总源数。 */
+    private val _queriedCount = MutableStateFlow(0)
+    val queriedCount: StateFlow<Int> = _queriedCount.asStateFlow()
+
+    private val _queryTotal = MutableStateFlow(0)
+    val queryTotal: StateFlow<Int> = _queryTotal.asStateFlow()
+
+    /** 用户编辑过的查询请求（主搜索名 / 次要搜索名）；null 表示跟随番剧标题。 */
+    private var queryTitle: String? = null
+    private var queryAliases: List<String> = emptyList()
+
+    /** 登录失效发生过（用于登录成功返回后自动重试的判定）。 */
+    private var cycaniWasExpired = false
+
+    /** 当前生效的主搜索名（编辑查询请求弹窗回显用）。 */
+    fun currentSearchTitle(): String = queryTitle ?: _anime.value?.title.orEmpty()
 
     /**
      * 需要展示「选择数据源 / 线路」面板（播放链接不可播放 / 解析失败 / 播放出错时由 ViewModel 主动请求）。
@@ -167,6 +222,35 @@ class PlayerViewModel @Inject constructor(
     private var autoSwitching = false
 
     /**
+     * 「找可播放链接」预算：单数据源在 [SOURCE_FIND_TIMEOUT_MS] 内必须解析出**且**预检可播放的直链，
+     * 否则视为超时 → 走失败处理（自动换源 / 交还用户选择），避免慢源（次元城 WebView 等待、慢 CSS）
+     * 长时间黑屏挂起。每次切集/换源都会重新计时。
+     */
+    private val SOURCE_FIND_TIMEOUT_MS = 5_000L
+
+    /**
+     * 自动换源时「查候选源」的上限：避免 [SourceCandidateProvider.buildFor] 全源扫完把播放器
+     * 卡在「正在自动切换数据源…」几十秒。配合 [SourceCandidateProvider.buildFor] 的
+     * [com.example.tuanyingshi.util.source_rule.SourceCandidateProvider.buildFor] 提前结束，一般远早于此即返回。
+     */
+    private val PER_SOURCE_FIND_TIMEOUT_MS = 8_000L
+
+    /** 是否正处于「寻找可播放链接」阶段（加载区据此显示倒计时，而非干等）。 */
+    private val _sourceFinding = MutableStateFlow(false)
+    val sourceFinding: StateFlow<Boolean> = _sourceFinding.asStateFlow()
+
+    /** 找源倒计时剩余毫秒（每 100ms 更新一次，归零即超时切源）。 */
+    private val _sourceFindRemainingMs = MutableStateFlow(0)
+    val sourceFindRemainingMs: StateFlow<Int> = _sourceFindRemainingMs.asStateFlow()
+
+    /** 是否正在「自动切换数据源」（自动换源循环进行中），供加载区提示文案区分。 */
+    private val _autoSwitchingSource = MutableStateFlow(false)
+    val autoSwitchingSource: StateFlow<Boolean> = _autoSwitchingSource.asStateFlow()
+
+    /** 次元城登录失效的统一提示文案。 */
+    private val CYCANI_EXPIRED_MESSAGE = "次元城登录已失效，请重新登录后再播放"
+
+    /**
      * 后台预匹配缓存：key=episodeUrl，value=已解析出的真实视频流。
      * 用户选中某集并匹配成功后，其余集数在后台并发解析并写入此表；
      * 之后用户切到这些集时直接命中缓存、瞬时播放，无需再次联网匹配。
@@ -174,6 +258,30 @@ class PlayerViewModel @Inject constructor(
     private val playUrlCache = ConcurrentHashMap<String, WebVideo>()
 
     init {
+        // 次元城登录失效：无论从哪个请求触发（播放地址 / 选集 / 详情），都在此收口——
+        // 给出明确错误文案，由错误页的「重新登录次元城」按钮导航到全屏登录页（不再使用弹窗）。
+        // 注意：后台预匹配其它集数也可能触发失效，此时不能打断正在正常播放的视频，
+        // 只在「确实没播起来」时才把错误显示出来。
+        viewModelScope.launch {
+            CycaniAuthManager.sessionExpired.collect { expired ->
+                if (expired) {
+                    matchLog("检测到次元城登录失效 → 引导重新登录", DebugLogLevel.WARN)
+                    cycaniWasExpired = true
+                    if (_video.value == null) {
+                        _error.value = CYCANI_EXPIRED_MESSAGE
+                    }
+                } else if (cycaniWasExpired) {
+                    // 从登录页登录成功返回（sessionExpired 复位）：自动重试当前集解析
+                    cycaniWasExpired = false
+                    if (_video.value == null) {
+                        _error.value = null
+                        matchLog("次元城重新登录成功 → 自动重试当前集", DebugLogLevel.INFO)
+                        retry()
+                    }
+                }
+            }
+        }
+
         // 载入已下载集数（离线可看）
         viewModelScope.launch {
             runCatching {
@@ -212,7 +320,7 @@ class PlayerViewModel @Inject constructor(
 
         viewModelScope.launch {
             val offline = !NetworkMonitor.isOnline.value
-            val detail = when (val res = animeRepository.getAnimeDetail(detailUrl, SourceHolder.currentSourceMode)) {
+            val detail = when (val res = animeRepository.getAnimeDetail(detailUrl, SourceHolder.currentSourceMode, sourceId)) {
                 is Resource.Success -> res.data
                 else -> null
             }
@@ -238,9 +346,7 @@ class PlayerViewModel @Inject constructor(
             val eps = sortedChannels[initialChannel] ?: detail.episodes
             _episodes.value = eps
 
-            val index = eps.indexOfFirst { it.url == initialEpisodeUrl }.takeIf { it >= 0 } ?: 0
-            val currentEpisode = eps.getOrNull(index) ?: return@launch
-
+            val foundIndex = eps.indexOfFirst { it.url == initialEpisodeUrl }.takeIf { it >= 0 }
             _anime.value = AnimeDetailLite(
                 title = detail.title,
                 img = detail.img,
@@ -250,10 +356,61 @@ class PlayerViewModel @Inject constructor(
                 sourceName = detail.sourceName,
                 iconUrl = detail.iconUrl,
             )
+            // 当前数据源展示：优先详情自带（CSS 规则源），回退当前资源源（如「次元城」）
+            _currentSourceName.value = detail.sourceName.ifBlank {
+                SourceHolder.getResourceSource(SourceHolder.currentSourceId)?.name ?: ""
+            }
+            _currentSourceIcon.value = detail.iconUrl.ifBlank {
+                SourceHolder.getResourceSource(SourceHolder.currentSourceId)?.iconUrl ?: ""
+            }
+            _currentSourceId.value = detail.sourceId.ifBlank { SourceHolder.currentSourceId }
             _rawRelated.value = detail.relatedAnimes.orEmpty()
             loadComments()
 
-            loadVideo(currentEpisode, index, initialChannel)
+            if (foundIndex != null) {
+                loadVideo(eps[foundIndex], foundIndex, initialChannel)
+            } else {
+                // 初始集地址不属于已加载的源 → 详情页切换过数据源（与详情页选择保持一致）：
+                // 从候选源（SourceCandidateProvider 缓存命中，瞬时）定位该集所属的源与线路并直接启用
+                locateEpisodeFromCandidates(initialEpisodeUrl)
+            }
+        }
+    }
+
+    /**
+     * 播放页与详情页选择保持一致：详情页换源后点播放，导航只带 (detailUrl, episodeUrl)，
+     * 播放页按 detailUrl 加载到的仍是原源的详情，找不到该集地址。
+     * 此时在候选源列表（详情页查过 → 进程内缓存命中）里找包含该集地址的源/线路，直接切换启用。
+     * 找不到（候选源未覆盖）时保持原状，由用户手动换源。
+     */
+    private fun locateEpisodeFromCandidates(episodeUrl: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val title = _anime.value?.title.orEmpty()
+            if (title.isBlank()) return@launch
+            val candidates = runCatching { SourceCandidateProvider.buildFor(title = title) }.getOrNull().orEmpty()
+            for (c in candidates) {
+                for ((line, lineEps) in c.channels) {
+                    val idx = lineEps.indexOfFirst { it.url == episodeUrl }
+                    if (idx < 0) continue
+                    withContext(Dispatchers.Main) {
+                        matchLog(
+                            "初始集命中候选源 ${c.sourceName} 线路=$line → 与详情页选择保持一致",
+                            DebugLogLevel.INFO,
+                        )
+                        _channels.value = c.channels
+                        _channelNames.value = c.channelNames
+                        _currentChannelIndex.value = line
+                        _episodes.value = lineEps
+                        _currentSourceName.value = c.sourceName
+                        _currentSourceIcon.value = c.iconUrl
+                        _currentSourceId.value = c.sourceId
+                        preferredRuleId = c.sourceId
+                        loadVideo(lineEps[idx], idx, line)
+                    }
+                    return@launch
+                }
+            }
+            matchLog("初始集未在任何候选源中找到，回退用户手动换源", DebugLogLevel.WARN)
         }
     }
 
@@ -298,25 +455,64 @@ class PlayerViewModel @Inject constructor(
                 null
             } else {
                 _video.value?.sourceId?.takeIf { SourceRuleRepository.getById(it) != null }
+                    ?: preferredRuleId.takeIf { it.isNotBlank() && SourceRuleRepository.getById(it) != null }
             }
             matchLog("loadVideo 入口 episode=${episode.url.take(80)} name=${episode.name} channel=$channelIndex mode=${SourceHolder.currentSourceMode} pinnedRule=$pinnedRuleId")
             _error.value = null
-            val webVideoRes = if (pinnedRuleId != null) {
-                // 非 API 源：仅解析当前正在播放的这一个 CSS 规则源（单源，不重匹配全部集数）
-                animeRepository.getVideoDataByRule(pinnedRuleId, episode.url)
-            } else {
-                // API 源 / 首次进入（尚未确定具体源）：走默认/聚合源
-                animeRepository.getVideoData(episode.url, SourceHolder.currentSourceMode)
+
+            // ── 5 秒找源预算：解析 + 预检都必须在 SOURCE_FIND_TIMEOUT_MS 内完成，
+            //    超时则放弃当前源、走失败处理（自动换源 / 交还用户选择），避免慢源长期黑屏挂起。 ──
+            _sourceFinding.value = true
+            _sourceFindRemainingMs.value = SOURCE_FIND_TIMEOUT_MS.toInt()
+            val ticker = launch {
+                val start = System.currentTimeMillis()
+                while (isActive) {
+                    val left = (SOURCE_FIND_TIMEOUT_MS - (System.currentTimeMillis() - start)).coerceAtLeast(0).toInt()
+                    _sourceFindRemainingMs.value = left
+                    if (left <= 0) break
+                    delay(100)
+                }
             }
-            webVideoRes
-                .onSuccess { webVideo ->
-                    matchLog("loadVideo 解析成功 url=${webVideo.url.take(140)} headers=${webVideo.headers.size} src=${webVideo.sourceName}", DebugLogLevel.INFO)
-                    // 播放前预检直链是否可播放（与播放走同一代理链）
-                    val playable = VideoUrlChecker.canPlay(webVideo.url, webVideo.headers)
-                    matchLog("loadVideo 预检 canPlay=$playable")
-                    if (playable) {
+            val resolved = withTimeoutOrNull(SOURCE_FIND_TIMEOUT_MS) {
+                val res = if (pinnedRuleId != null) {
+                    // 非 API 源：仅解析当前正在播放的这一个 CSS 规则源（单源，不重匹配全部集数）
+                    animeRepository.getVideoDataByRule(pinnedRuleId, episode.url)
+                } else {
+                    // API 源 / 首次进入（尚未确定具体源）：走默认/聚合源
+                    animeRepository.getVideoData(episode.url, SourceHolder.currentSourceMode)
+                }
+                // 解析成功后立即预检直链可播放性（与播放走同一代理链），预检计入同一 5s 预算
+                when (res) {
+                    is Result.Success -> FindResult.Ok(res.data, VideoUrlChecker.canPlay(res.data.url, res.data.headers))
+                    is Result.Error -> FindResult.Fail(res.error)
+                }
+            }
+            ticker.cancel()
+            _sourceFinding.value = false
+            _sourceFindRemainingMs.value = 0
+
+            when {
+                resolved == null -> {
+                    // 5s 内没找到可播放链接：放弃当前源，进入失败处理（自动换源 / 交还用户）
+                    matchLog("loadVideo ${SOURCE_FIND_TIMEOUT_MS}ms 内未解析出可播放链接 → 超时失败处理", DebugLogLevel.WARN)
+                    onPlaybackFailure(timeoutMessage())
+                }
+                resolved is FindResult.Fail -> {
+                    matchLog("loadVideo 解析失败 error=${resolved.cause?.message}", DebugLogLevel.ERROR)
+                    // 次元城登录失效不用「换线路/换源」兜底：换到哪条线路都还是 401，
+                    // 正确解法是让用户重新登录（弹窗已由 sessionExpired 收集器拉起）。
+                    if (isCycaniAuthFailure(resolved.cause)) {
+                        _video.value = null
+                        _error.value = CYCANI_EXPIRED_MESSAGE
+                    } else {
+                        onPlaybackFailure("该线路解析失败，请选择其它数据源 / 线路")
+                    }
+                }
+                resolved is FindResult.Ok -> {
+                    matchLog("loadVideo 解析成功 url=${resolved.webVideo.url.take(140)} headers=${resolved.webVideo.headers.size} src=${resolved.webVideo.sourceName} canPlay=${resolved.playable}", DebugLogLevel.INFO)
+                    if (resolved.playable) {
                         // 用户选中的这一集已优先匹配到 → 直接组装并播放
-                        commitVideo(episode, index, channelIndex, webVideo)
+                        commitVideo(episode, index, channelIndex, resolved.webVideo)
                         // 随后在后台继续匹配剩余集数，命中缓存后切集即瞬时播放
                         prefetchRemaining(episode.url)
                     } else {
@@ -325,11 +521,7 @@ class PlayerViewModel @Inject constructor(
                         onPlaybackFailure("该线路暂不可播放，请选择其它数据源 / 线路")
                     }
                 }
-                .onError { e ->
-                    // 解析失败：开启自动换线路/源则自动尝试，否则交还用户选择
-                    matchLog("loadVideo 解析失败 error=${e.message}", DebugLogLevel.ERROR)
-                    onPlaybackFailure("该线路解析失败，请选择其它数据源 / 线路")
-                }
+            }
         }
     }
 
@@ -339,6 +531,7 @@ class PlayerViewModel @Inject constructor(
      */
     private fun commitVideo(episode: Episode, index: Int, channelIndex: Int, webVideo: WebVideo) {
         _error.value = null
+        _autoSwitchingSource.value = false
         _currentChannelIndex.value = channelIndex
         _episodes.value = _channels.value[channelIndex] ?: _episodes.value
         _video.value = Video(
@@ -533,6 +726,14 @@ class PlayerViewModel @Inject constructor(
         return Regex("(\\d+)").find(name)?.value?.toIntOrNull()
     }
 
+    /** 单源「找可播放链接」的解析结果（含 5s 超时预算内的解析与预检结论）。 */
+    private sealed interface FindResult {
+        /** 解析成功；[playable] 为直链预检是否可播放。 */
+        data class Ok(val webVideo: WebVideo, val playable: Boolean) : FindResult
+        /** 解析失败（含次元城登录失效等异常）。 */
+        data class Fail(val cause: Throwable?) : FindResult
+    }
+
     /** 手动切换线路：把当前播放集映射到目标线路的对应集并重载。
      * @param resetAuto 是否重置自动换线路/源的已尝试记录（用户主动点击线路 Tab 时用 true，
      * 自动切换内部递归调用时用 false，以保留已尝试记录避免重复重试）。 */
@@ -573,6 +774,21 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch { attemptAutoSwitch(failMsg) }
     }
 
+    /** 5 秒找源超时的提示文案：根据「自动换源」开关给出「正在切换」或「请手动选择」。 */
+    private fun timeoutMessage(): String =
+        if (PlaybackPrefs.isAutoSwitchOnFail()) {
+            "5 秒内未找到可播放链接，正在切换数据源"
+        } else {
+            "5 秒内未找到可播放链接，请选择其他数据源 / 线路"
+        }
+
+    /**
+     * 是否为「次元城登录失效」导致的失败。
+     * 数据源层会直接抛 [CycaniSessionExpiredException]，也可通过全局失效标记兜底识别。
+     */
+    private fun isCycaniAuthFailure(e: Throwable?): Boolean =
+        (e is CycaniSessionExpiredException) || CycaniAuthManager.sessionExpired.value
+
     /**
      * 自动换线路 / 源（仅当 [PlaybackPrefs.isAutoSwitchOnFail] 为 true 时由 [onPlaybackFailure] 调用）。
      * 尝试顺序：当前源内下一未尝试线路 → 下一个未尝试的 CSS 源 → 全部失败才交还用户。
@@ -582,6 +798,7 @@ class PlayerViewModel @Inject constructor(
     private suspend fun attemptAutoSwitch(failMsg: String) {
         if (autoSwitching) return
         autoSwitching = true
+        _autoSwitchingSource.value = true
         try {
             // 1) 当前源内切换下一未尝试线路
             autoTriedChannels.add(_currentChannelIndex.value)
@@ -618,7 +835,13 @@ class PlayerViewModel @Inject constructor(
             } else {
                 null
             }
-            val candidates = SourceCandidateProvider.buildFor(title, current) { }
+            // 自动换源：查候选时不要全源扫完（那会卡几十秒），有可用数据即结束，
+            // 并套上超时保险，避免播放器长时间卡在「正在自动切换数据源…」。
+            val candidates = runCatching {
+                withTimeoutOrNull(PER_SOURCE_FIND_TIMEOUT_MS) {
+                    SourceCandidateProvider.buildFor(title, current, stopWhenEnough = true)
+                }.orEmpty()
+            }.getOrDefault(emptyList())
             // 标记当前（已失败的）源，避免下面又选回它
             if (srcId.isNotBlank()) autoTriedSources.add(srcId)
             autoTriedChannels.clear()
@@ -644,6 +867,7 @@ class PlayerViewModel @Inject constructor(
     /** 自动换线路/源全部不可用时：保留错误提示并弹出用户选择面板。 */
     private fun finalAutoSwitchFailure(failMsg: String) {
         matchLog("自动换线路/源全部失败，交还用户选择", DebugLogLevel.ERROR)
+        _autoSwitchingSource.value = false
         _error.value = failMsg
         requestSourcePick()
     }
@@ -670,6 +894,8 @@ class PlayerViewModel @Inject constructor(
                 episode = Episode(name = v.episodeName, url = v.episodeUrl, lastPlayPosition = positionMs),
                 position = positionMs,
                 mode = SourceHolder.currentSourceMode,
+                // 当前生效的数据源（换源后同步），浏览历史展示「用的哪个源」
+                sourceName = v.sourceName.ifBlank { _currentSourceName.value },
             )
         }
     }
@@ -688,21 +914,41 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** 为「换源」选择器构建所有可用 CSS 源候选（按标题搜索各源并取回线路）。 */
-    fun loadSourceCandidates() {
-        val title = _anime.value?.title ?: return
+    /**
+     * 为「换源」选择器构建所有可用 CSS 源候选（按标题搜索各源并取回线路）。
+     *
+     * @param titleOverride 用户在「编辑查询请求」里改过的主搜索名；传非空值会覆盖番剧标题。
+     * @param aliases 次要搜索名（与 [titleOverride] 一起生效）。
+     * @param force 为 true 时清除该标题的候选缓存强制重新查询（刷新按钮 / 修改请求后）；
+     *   默认缓存进程内长期有效，同一番剧重复打开选择器不重查（切换番剧=标题变化=重新搜索）。
+     */
+    fun loadSourceCandidates(
+        titleOverride: String? = null,
+        aliases: List<String>? = null,
+        force: Boolean = false,
+    ) {
+        if (titleOverride != null && titleOverride.isNotBlank()) queryTitle = titleOverride.trim()
+        if (aliases != null) queryAliases = aliases
+        val title = queryTitle ?: _anime.value?.title ?: return
         if (title.isBlank()) return
-        // 当前源（播放页已成功加载）作为兜底候选，保证选择器至少 1 个可用源
+        if (force) SourceCandidateProvider.invalidate(title)
+        // 当前源（播放页已成功加载）作为兜底候选，保证选择器至少 1 个可用源。
+        // 注意：资源源（如弹弹play）的 detail.sourceId/sourceName 可能为空，
+        // 此时回退到全局当前资源源 + 卡片正在展示的源名/图标，保证面板与卡片一致。
         val v = _video.value
         val a = _anime.value
-        val srcId = v?.sourceId ?: a?.sourceId ?: ""
+        val srcId = v?.sourceId ?: a?.sourceId?.takeIf { it.isNotBlank() } ?: SourceHolder.currentSourceId
+        val srcName = (v?.sourceName ?: a?.sourceName ?: "").ifBlank {
+            _currentSourceName.value.ifBlank { SourceHolder.getResourceSource(srcId)?.name.orEmpty() }
+        }
+        val srcIcon = (v?.iconUrl ?: a?.iconUrl ?: "").ifBlank {
+            _currentSourceIcon.value.ifBlank { SourceHolder.getResourceSource(srcId)?.iconUrl.orEmpty() }
+        }
         val current = if (srcId.isNotBlank() && _channels.value.isNotEmpty()) {
             SourceCandidate(
                 sourceId = srcId,
-                sourceName = (v?.sourceName ?: a?.sourceName ?: "").ifBlank {
-                    SourceHolder.getResourceSource(srcId)?.name ?: srcId
-                },
-                iconUrl = v?.iconUrl ?: a?.iconUrl ?: "",
+                sourceName = srcName,
+                iconUrl = srcIcon,
                 channels = _channels.value,
                 channelNames = _channelNames.value,
             )
@@ -710,9 +956,17 @@ class PlayerViewModel @Inject constructor(
             null
         }
         viewModelScope.launch(Dispatchers.IO) {
-            SourceCandidateProvider.buildFor(title, current) { list ->
-                _sourceCandidates.value = list
-            }
+            SourceCandidateProvider.buildFor(
+                title = title,
+                current = current,
+                aliases = queryAliases,
+                onUpdate = { list -> _sourceCandidates.value = list },
+                onProgress = { states, queried, total ->
+                    _queryStates.value = states
+                    _queriedCount.value = queried
+                    _queryTotal.value = total
+                },
+            )
         }
     }
 
@@ -735,9 +989,20 @@ class PlayerViewModel @Inject constructor(
         _channelNames.value = candidate.channelNames
         _currentChannelIndex.value = line
         _episodes.value = targetEps
+        // 当前源展示同步更新（「数据源·更换」卡片与详情页选择保持一致）
+        _currentSourceName.value = candidate.sourceName
+        _currentSourceIcon.value = candidate.iconUrl
+        _currentSourceId.value = candidate.sourceId
+        preferredRuleId = candidate.sourceId
         // 用户已明确选择该源，重置「选择面板」弹出标志，避免加载完又弹起
         _showSourcePicker.value = false
-        loadVideoByRule(candidate.sourceId, corresp, targetEps.indexOf(corresp), line, resetAuto)
+        if (SourceRuleRepository.getById(candidate.sourceId) != null) {
+            loadVideoByRule(candidate.sourceId, corresp, targetEps.indexOf(corresp), line, resetAuto)
+        } else {
+            // 非规则源（资源源兜底候选，如弹弹play）：按全局当前源模式解析
+            preferredRuleId = ""
+            loadVideo(corresp, targetEps.indexOf(corresp), line, resetAuto)
+        }
     }
 
     /** 请求 UI 弹出「选择数据源 / 线路」面板（构建候选源），不再静默遍历其它资源。 */
@@ -778,11 +1043,46 @@ class PlayerViewModel @Inject constructor(
             val tag = "PlayerVM"
             matchLog("loadVideoByRule 换源 rule=$ruleId episode=${episode.url.take(80)} channel=$channelIndex")
             _error.value = null
-            animeRepository.getVideoDataByRule(ruleId, episode.url)
-                .onSuccess { webVideo ->
-                    matchLog("loadVideoByRule 解析成功 url=${webVideo.url.take(140)} headers=${webVideo.headers.size} src=${webVideo.sourceName}", DebugLogLevel.INFO)
-                    if (webVideo.url.isNotBlank()) {
-                        commitVideo(episode, index, channelIndex, webVideo)
+
+            // ── 5 秒找源预算（同 loadVideo）：换源解析也必须在 SOURCE_FIND_TIMEOUT_MS 内完成，超时即切下一个源。 ──
+            _sourceFinding.value = true
+            _sourceFindRemainingMs.value = SOURCE_FIND_TIMEOUT_MS.toInt()
+            val ticker = launch {
+                val start = System.currentTimeMillis()
+                while (isActive) {
+                    val left = (SOURCE_FIND_TIMEOUT_MS - (System.currentTimeMillis() - start)).coerceAtLeast(0).toInt()
+                    _sourceFindRemainingMs.value = left
+                    if (left <= 0) break
+                    delay(100)
+                }
+            }
+            val res = withTimeoutOrNull(SOURCE_FIND_TIMEOUT_MS) {
+                animeRepository.getVideoDataByRule(ruleId, episode.url)
+            }
+            ticker.cancel()
+            _sourceFinding.value = false
+            _sourceFindRemainingMs.value = 0
+
+            when {
+                res == null -> {
+                    matchLog("loadVideoByRule ${SOURCE_FIND_TIMEOUT_MS}ms 超时未解析出链接 → 失败处理", DebugLogLevel.WARN)
+                    _video.value = null
+                    onPlaybackFailure(timeoutMessage())
+                }
+                res is Result.Error -> {
+                    matchLog("loadVideoByRule 解析失败 error=${res.error.message}", DebugLogLevel.ERROR)
+                    if (isCycaniAuthFailure(res.error)) {
+                        _video.value = null
+                        _error.value = CYCANI_EXPIRED_MESSAGE
+                    } else {
+                        _video.value = null
+                        onPlaybackFailure("该数据源解析失败，请尝试其他数据源/线路")
+                    }
+                }
+                res is Result.Success -> {
+                    matchLog("loadVideoByRule 解析成功 url=${res.data.url.take(140)} headers=${res.data.headers.size} src=${res.data.sourceName}", DebugLogLevel.INFO)
+                    if (res.data.url.isNotBlank()) {
+                        commitVideo(episode, index, channelIndex, res.data)
                         // 换源后同样把该源其余集数放入后台预匹配，保证后续切集瞬时
                         prefetchRemaining(episode.url)
                     } else {
@@ -790,11 +1090,7 @@ class PlayerViewModel @Inject constructor(
                         onPlaybackFailure("该数据源此集暂无可播放链接，请尝试其他数据源/线路")
                     }
                 }
-                .onError { e ->
-                    matchLog("loadVideoByRule 解析失败 error=${e.message}", DebugLogLevel.ERROR)
-                    _video.value = null
-                    onPlaybackFailure("该数据源解析失败，请尝试其他数据源/线路")
-                }
+            }
         }
     }
 

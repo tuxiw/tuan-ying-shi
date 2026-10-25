@@ -2,30 +2,53 @@ package com.example.tuanyingshi.util.source_rule
 
 import android.annotation.SuppressLint
 import android.util.Base64
+import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import java.io.ByteArrayInputStream
+import java.net.URI
+import java.util.concurrent.TimeUnit
 import com.example.tuanyingshi.TuanyingApp
 import com.example.tuanyingshi.data.remote.parse.util.scheduleSafeDestroyWebView
 import com.example.tuanyingshi.data.remote.parse.util.webViewLock
 import com.example.tuanyingshi.util.DebugLogCollector
 import com.example.tuanyingshi.util.DefaultUserAgent
+import com.example.tuanyingshi.util.ProxyHolder
+import com.example.tuanyingshi.util.ProxyMode
+import com.example.tuanyingshi.util.applyProxy
 import com.example.tuanyingshi.util.log
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
-private const val TAG = "KazumiVerifier"
+// 统一用 CfVerification tag，方便用同一过滤条件同时观察协调器与过盾器内部状态（含 loadUrl / 进度 / 轮询状态）。
+private const val TAG = "CfVerification"
 
 /** 各阶段超时（毫秒）。 */
 private const val IMAGE_WAIT_MS = 20_000L
 private const val SUBMIT_WAIT_MS = 15_000L
 private const val AUTOCLICK_WAIT_MS = 20_000L
 private const val SCRIPT_WAIT_MS = 20_000L
+
+/** Cloudflare 轮询间隔（对齐 HaRu 的 500ms）。 */
+private const val CF_POLL_INTERVAL_MS = 500L
+/** Cloudflare 验证总超时：JS 挑战通常 5~10s 自动放行，Turnstile 需人工点击故给足时间。 */
+private const val CF_TOTAL_TIMEOUT_MS = 45_000L
+/** 多久没等到 clearance 才提示用户「可能卡住了」（只改文案，不自动刷新）。 */
+private const val CF_WAIT_HINT_MS = 8_000L
 
 /**
  * 验证结果：收割到的页面 HTML（可直接当搜索结果解析，省一次请求）+ 验证得到的 Cookie + UA。
@@ -94,6 +117,8 @@ object KazumiWebViewVerifier {
     ): VerifyResult? {
         val tag = "Kazumi[${rule.name}]"
         var webView: WebView? = null
+        // shouldInterceptRequest 跑在后台线程，CookieManager 实例必须在主线程取好再传参
+        val cookieManager = CookieManager.getInstance()
         val imageDeferred = CompletableDeferred<String>()   // 第一次捕到的验证码图片 base64
         val goneDeferred = CompletableDeferred<Unit>()      // 验证通过（消失 / done）
         var clickedFlag = false
@@ -129,6 +154,20 @@ object KazumiWebViewVerifier {
                     failingUrl: String?,
                 ) {
                     DebugLogCollector.e("KazumiVerifier", "verifier", "$tag onReceivedError code=$errorCode $failingUrl : $description")
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    webRequest: WebResourceRequest?,
+                ): WebResourceResponse? {
+                    // ⚠️ 后台线程回调：不得调用 WebView 方法（view.settings 会触发 checkThread 崩溃）。
+                    // UA 即 createWebView() 所用的 DefaultUserAgent；CookieManager 主线程预取传入。
+                    if (webRequest == null || !shouldBridgeWebViewRequests()) return null
+                    return bridgeWebResource(
+                        webRequest,
+                        DefaultUserAgent,
+                        cookieManager,
+                    )
                 }
 
                 override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
@@ -192,6 +231,423 @@ object KazumiWebViewVerifier {
         } finally {
             scheduleSafeDestroyWebView(webView)
         }
+    }
+
+    // ─────────────────── Cloudflare 5 秒盾 / Turnstile 验证 ───────────────────
+
+    /**
+     * Cloudflare 专用验证：**不看 XPath、不做用户输入**，纯轮询等待盾自动放行。
+     *
+     * 移植自 HaRu（Flutter）`HanimeCloudflarePage` 的核心循环，四条关键约定：
+     * 1. **UA 绑定**：用调用方给的 UA（必须与后续 OkHttp 请求完全一致），否则 cf_clearance 立刻失效；
+     * 2. **cf_clearance 是 httpOnly**：只能从 `CookieManager.getCookie(origin)` 读，
+     *    `document.cookie` 读不到，所以每次轮询都额外拉一次原生 cookie；
+     * 3. **见过挑战页后必须等 clearance 出现**才算通过（`observedChallenge → hasClearance`），
+     *    否则会在盾尚未下发 cookie 时就提前收割，后续请求照旧被拦；
+     * 4. **禁止自动 reload**：等待超时只改提示文案，等用户手动点「重试」（自动重刷会触发
+     *    「等不到 cookie → 重刷 → 再挑战」死循环，这是 HaRu 踩过的坑）。
+     *
+     * @param request 由 [CfVerificationCoordinator] 统一排队下发（已去重 / 串行）
+     * @param onStatus 状态文案回调，转发给 UI 卡片
+     * @return 验证结果（HTML + Cookie + UA）；超时且仍是被拦页时返回 null
+     */
+    suspend fun verifyCloudflare(
+        request: CfVerificationRequest,
+        onStatus: (String) -> Unit = {},
+    ): VerifyResult? = withContext(Dispatchers.Main) {
+        webViewLock.withLock { runCloudflareVerify(request, onStatus) }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun runCloudflareVerify(
+        request: CfVerificationRequest,
+        onStatus: (String) -> Unit,
+    ): VerifyResult? {
+        val tag = "Cf[${request.host}]"
+        val startedAt = System.currentTimeMillis()
+        val cookieUrl = CloudflareDetector.originOf(request.url)
+        // shouldInterceptRequest 跑在后台线程，CookieManager 实例必须在主线程取好再传参
+        val cookieManager = CookieManager.getInstance()
+        var webView: WebView? = null
+        var progress = 0
+        var observedChallenge = false
+        var waitingSince: Long? = null
+        var waitHinted = false
+        var interactionPublished = false
+
+        try {
+            webView = createCloudflareWebView(request.userAgent)
+            val wv = webView
+            var lastStateLogAt = 0L
+            wv.webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    val old = progress
+                    progress = newProgress
+                    // 进度是判断「WebView 到底连没连上」的最直接信号，关键节点打点
+                    if (newProgress != old && (newProgress == 100 || newProgress % 25 == 0)) {
+                        "$tag onProgressChanged: $newProgress url=${view?.url}".log(TAG)
+                    }
+                }
+            }
+            wv.webViewClient = object : WebViewClient() {
+                override fun onReceivedError(
+                    view: WebView?,
+                    errorCode: Int,
+                    description: String?,
+                    failingUrl: String?,
+                ) {
+                    val msg = "onReceivedError code=$errorCode $failingUrl : $description"
+                    DebugLogCollector.e("CfVerifier", "verifier", "$tag $msg")
+                    "$tag $msg".log(TAG)
+                    // 只有「主文档 + 连接类错误」才打断用户（子资源 favicon 404 之类很常见，不打扰）
+                    val mainFrameLike = failingUrl != null && runCatching {
+                        URI(failingUrl).host.equals(request.host, ignoreCase = true)
+                    }.getOrDefault(false)
+                    val connective = errorCode in intArrayOf(
+                        WebViewClient.ERROR_HOST_LOOKUP,
+                        WebViewClient.ERROR_CONNECT,
+                        WebViewClient.ERROR_TIMEOUT,
+                        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE,
+                        WebViewClient.ERROR_PROXY_AUTHENTICATION,
+                    )
+                    if (mainFrameLike && connective) {
+                        onStatus("页面连接失败（${description ?: "code=$errorCode"}），请到设置里检查代理，或点「重试」。")
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?,
+                ) {
+                    // 只记录主文档的 HTTP 错误（子资源 404/403 很常见，不关心）
+                    if (request?.isForMainFrame == true) {
+                        val msg = "onReceivedHttpError ${errorResponse?.statusCode} ${request?.url}"
+                        DebugLogCollector.e("CfVerifier", "verifier", "$tag $msg")
+                        "$tag $msg".log(TAG)
+                    }
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    webRequest: WebResourceRequest?,
+                ): WebResourceResponse? {
+                    // ⚠️ 本回调在后台线程执行：绝不能调用 WebView 的任何方法（含 view.settings），
+                    // 否则触发 checkThread 异常直接崩溃（曾实测「A WebView method was called on
+                    // thread 'ThreadPoolForeg'」）。UA 与 CookieManager 均在主线程预取后传参。
+                    if (webRequest == null || !shouldBridgeWebViewRequests()) return null
+                    return bridgeWebResource(
+                        webRequest,
+                        request.userAgent,
+                        cookieManager,
+                    )
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    "$tag doUpdateVisitedHistory: $url reload=$isReload".log(TAG)
+                }
+
+                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                    DebugLogCollector.e("CfVerifier", "verifier", "$tag onRenderProcessGone didCrash=${detail?.didCrash()}")
+                    return true
+                }
+            }
+            // 立刻暴露给 UI：卡片会在「检测到交互控件」或「等待超时」时把它挂到界面上显示
+            CfVerificationCoordinator.attachWebView(wv)
+            "$tag loadUrl: ${request.url}".log(TAG)
+            wv.loadUrl(request.url)
+
+            while (System.currentTimeMillis() - startedAt < CF_TOTAL_TIMEOUT_MS) {
+                delay(CF_POLL_INTERVAL_MS)
+                val currentUrl = wv.url.orEmpty()
+                val cookie = runCatching { CookieManager.getInstance().getCookie(cookieUrl) }.getOrNull().orEmpty()
+                val snap = snapshotCfPage(wv)
+                if (snap == null) {
+                    // 快照拿不到（evaluateJavascript 失败/渲染进程异常）也要留痕，避免「白屏卡住」无从排查
+                    if (System.currentTimeMillis() - lastStateLogAt >= 5_000) {
+                        lastStateLogAt = System.currentTimeMillis()
+                        "$tag 轮询状态: snapshot=null progress=$progress url=$currentUrl cookieLen=${cookie.length}".log(TAG)
+                        if (progress >= 90) onStatus("页面已加载但无法读取内容，可点「重试」。")
+                    }
+                    continue
+                }
+                val hostMatches = runCatching { URI(currentUrl).host }.getOrNull()
+                    ?.equals(request.host, ignoreCase = true) ?: false
+                val isChallenge = CloudflareDetector.isChallenge(
+                    "<html><head><title>${snap.title}</title></head><body>${snap.bodyText}</body></html>",
+                )
+                if (isChallenge) observedChallenge = true
+                val hasClearance = CloudflareDetector.hasClearance(cookie)
+
+                // 每 5 秒输出一次完整轮询状态：排查「一直白屏/一直等待」的关键证据链
+                if (System.currentTimeMillis() - lastStateLogAt >= 5_000) {
+                    lastStateLogAt = System.currentTimeMillis()
+                    "$tag 轮询状态: progress=$progress url=$currentUrl title=${snap.title.take(40)} " +
+                        "readyState=${snap.readyState} htmlLen=${snap.pageHtml.length} " +
+                        "markers=${CloudflareDetector.containsChallengeMarkers(snap.pageHtml)} " +
+                        "clearance=$hasClearance interactive=${snap.interactive}".log(TAG)
+                    // 无交互控件、无进展时给用户一个非空白的状态（不覆盖「请完成验证」提示）
+                    if (!observedChallenge && !hasClearance && progress >= 90) {
+                        onStatus("已连接 ${request.host}，正在等待验证结果…（${(System.currentTimeMillis() - startedAt) / 1000}s）")
+                    }
+                }
+
+                if (isChallenge && snap.interactive && !interactionPublished) {
+                    interactionPublished = true
+                    CfVerificationCoordinator.markInteractionRequired(true)
+                    onStatus("请在网页中完成验证，成功后会自动继续。")
+                }
+
+                val loaded = progress >= 90 || (hasClearance && snap.readyState == "complete")
+                // 通关判定对齐 Han1meViewer：拿到 cf_clearance 即视为真正过盾。
+                // 仅当页面 HTML 明确仍含 #challenge-form/#challenge-success-text/#challenge-error-text
+                // 标记时才视为未完成；其余情况（含快照失败/截断导致 pageHtml 为空）一律放行，
+                // 避免「已拿到 clearance 却因 HTML 截断被误杀」的死循环。
+                val challengeStillPresent = snap.pageHtml.isNotBlank() &&
+                    CloudflareDetector.containsChallengeMarkers(snap.pageHtml)
+                val canComplete = hostMatches &&
+                    snap.hasDocument &&
+                    loaded &&
+                    hasClearance &&
+                    !challengeStillPresent
+                if (canComplete) {
+                    val html = harvestHtml(wv)
+                    if (!html.isNullOrBlank() && !CloudflareDetector.containsChallengeMarkers(html)) {
+                        SourceCookieManager.saveFromWebView(
+                            currentUrl.ifBlank { request.url },
+                            cookie,
+                            request.userAgent,
+                        )
+                        "$tag 验证通过：progress=$progress clearance=$hasClearance htmlLen=${html.length} 耗时=${System.currentTimeMillis() - startedAt}ms"
+                            .log(TAG)
+                        onStatus("验证通过，正在继续加载…")
+                        return VerifyResult(html, cookie, request.userAgent)
+                    }
+                }
+
+                val now = System.currentTimeMillis()
+                if (observedChallenge && !isChallenge && !hasClearance && progress >= 90 && waitingSince == null) {
+                    waitingSince = now
+                    onStatus("正在等待验证结果…")
+                }
+                if (!hasClearance && waitingSince != null && now - waitingSince >= CF_WAIT_HINT_MS && !waitHinted) {
+                    waitHinted = true
+                    CfVerificationCoordinator.markInteractionRequired(true)
+                    onStatus("验证似乎卡住了，可以在卡片里手动重试。")
+                }
+            }
+            val lastCookie = runCatching { CookieManager.getInstance().getCookie(cookieUrl) }.getOrNull().orEmpty()
+            val html = harvestHtml(wv)
+            val gotClearance = CloudflareDetector.hasClearance(lastCookie)
+            "$tag 等待超时（${CF_TOTAL_TIMEOUT_MS}ms）htmlLen=${html?.length ?: 0} clearance=$gotClearance".log(TAG)
+            // 超时仍未拿到 cf_clearance → 视为失败，避免把无 clearance 的页面当成功回填。
+            return if (gotClearance && !html.isNullOrBlank() && !CloudflareDetector.containsChallengeMarkers(html)) {
+                SourceCookieManager.saveFromWebView(request.url, lastCookie, request.userAgent)
+                VerifyResult(html, lastCookie, request.userAgent)
+            } else {
+                null
+            }
+        } catch (e: Throwable) {
+            "$tag 验证异常：${e.message}".log(TAG)
+            return null
+        } finally {
+            val wv = webView
+            if (wv != null) {
+                // 若已被挂载到 Compose 卡片，先摘下来再销毁，避免 View 树持有已销毁的 WebView
+                runCatching { (wv.parent as? ViewGroup)?.removeView(wv) }
+                CfVerificationCoordinator.attachWebView(null)
+                CfVerificationCoordinator.markInteractionRequired(false)
+                scheduleSafeDestroyWebView(wv)
+            }
+        }
+    }
+
+    /**
+     * 过盾 WebView 请求桥接客户端：与 API 请求共用同一代理栈（[applyProxy] 动态读取 ProxyHolder）。
+     * 背景：WebView 的 ProxyOverride 属于隐藏 API（android.webkit.ProxyController 反射在多数
+     * 系统上被受限 API 拦截、静默失败），且部分 WebView 版本对 HTTPS 请求不套用代理——表现为
+     * 「OkHttp 开代理能连上站点（拿到 403 挑战页），WebView 却 ERR_CONNECTION_TIMED_OUT」。
+     * 桥接后 WebView 的全部 http(s) 请求都经 OkHttp 转发，代理必然生效。
+     */
+    private val bridgeClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .applyProxy()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * 是否需要桥接（最后手段）：仅当「CUSTOM 代理模式 + WebView 原生代理未生效」时才桥接。
+     *
+     * ⚠️ WebView 代理已生效时**绝不桥接**：WebResourceRequest 不暴露 POST body，桥接只能发空 body，
+     * Cloudflare 挑战向 /cdn-cgi/challenge-platform/... 的 POST 会全部失败 → 挑战页永远转圈、
+     * cf_clearance 永远拿不到（2026-10-25 实测：主文档能加载但 spinner 不结束）。
+     * 原生代理的 WebView 则与普通浏览器完全一致，POST/JS/Cookie 全部正常。
+     */
+    private fun shouldBridgeWebViewRequests(): Boolean =
+        ProxyHolder.mode == ProxyMode.CUSTOM && !ProxyHolder.webViewProxyApplied
+
+    /**
+     * 把 WebView 的 http(s) 请求经 OkHttp 桥接转发，返回可交给 WebView 的响应。
+     * - 复制 WebView 请求头（去掉 Cookie/Accept-Encoding：前者以 CookieManager 为准，
+     *   后者让 OkHttp 透明解压，避免把 gzip 流当原文交给 WebView）；
+     * - Cookie 从 CookieManager 读取注入（Set-Cookie 由响应侧写回）；
+     * - 响应 Set-Cookie 逐条写回 CookieManager——cf_clearance 只有落进 CookieManager，
+     *   轮询循环才收割得到（WebView 不会应用 WebResourceResponse 头里的 Set-Cookie）。
+     * - 失败返回 null：WebView 回退原生直连（会触发 onReceivedError，状态对用户可见）。
+     */
+    private fun bridgeWebResource(
+        request: WebResourceRequest,
+        userAgent: String,
+        cookieManager: CookieManager,
+    ): WebResourceResponse? {
+        val urlStr = request.url?.toString() ?: return null
+        val scheme = request.url?.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return null
+        return runCatching {
+            val builder = Request.Builder().url(urlStr)
+            var hasUa = false
+            request.requestHeaders?.forEach { (k, v) ->
+                when {
+                    k.equals("Cookie", ignoreCase = true) ||
+                        k.equals("Accept-Encoding", ignoreCase = true) -> Unit
+                    else -> {
+                        if (k.equals("User-Agent", ignoreCase = true)) hasUa = true
+                        builder.header(k, v)
+                    }
+                }
+            }
+            if (!hasUa) builder.header("User-Agent", userAgent)
+            runCatching { cookieManager.getCookie(urlStr) }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { builder.header("Cookie", it) }
+            // 注：WebResourceRequest 拿不到 POST body，按空 body 发送（CF 挑战主文档为 GET，
+            // Turnstile 回调以 GET/JS 为主，此局限只影响极少数带 body 的子请求）。
+            when (request.method.uppercase()) {
+                "POST" -> builder.post(RequestBody.create(null, ByteArray(0)))
+                "HEAD" -> builder.head()
+                "DELETE" -> builder.delete()
+                else -> Unit
+            }
+            val resp = bridgeClient.newCall(builder.build()).execute()
+            resp.headers("Set-Cookie").forEach { c ->
+                runCatching { cookieManager.setCookie(urlStr, c) }
+            }
+            val contentType = resp.header("Content-Type") ?: "text/html"
+            val mime = contentType.substringBefore(";").trim().ifBlank { "text/html" }
+            val charset = Regex("charset=([^;]+)", RegexOption.IGNORE_CASE)
+                .find(contentType)?.groupValues?.get(1)?.trim()
+            val headers = linkedMapOf<String, String>()
+            resp.headers.forEach { (k, v) ->
+                if (!k.equals("Content-Encoding", ignoreCase = true) &&
+                    !k.equals("Content-Length", ignoreCase = true) &&
+                    !k.equals("Transfer-Encoding", ignoreCase = true) &&
+                    !k.equals("Set-Cookie", ignoreCase = true)
+                ) headers[k] = v
+            }
+            val bodyStream = resp.body?.byteStream() ?: ByteArrayInputStream(ByteArray(0))
+            WebResourceResponse(
+                mime, charset, resp.code, resp.message.ifBlank { "OK" }, headers, bodyStream,
+            )
+        }.onFailure {
+            "桥接 WebView 请求失败 $urlStr : ${it.message}".log(TAG)
+        }.getOrNull()
+    }
+
+    /**
+     * CF 验证专用 WebView：与 OkHttp 同 UA、开启 JS 与 DOM 存储，
+     * 且**允许加载图片**（Turnstile / 某些盾的行内验证资源依赖图片，禁图会卡在挑战页）。
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun createCloudflareWebView(userAgent: String): WebView {
+        return WebView(TuanyingApp.getInstance()).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            @Suppress("DEPRECATION")
+            settings.databaseEnabled = true
+            settings.userAgentString = userAgent
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.loadsImagesAutomatically = true
+            settings.blockNetworkImage = false
+            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            // Turnstile 等验证控件依赖 window.open，必须允许 JS 开窗口。
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            // 关键：Cloudflare Turnstile 在 challenges.cloudflare.com 等第三方域下发 cookie，
+            // 不接受第三方 Cookie 会让 cf_clearance 永远拿不到（参考 Han1meViewer CloudflareActivity）。
+            val cm = CookieManager.getInstance()
+            cm.setAcceptCookie(true)
+            cm.setAcceptThirdPartyCookies(this@apply, true)
+            webChromeClient = DebugLogCollector.consoleClient()
+        }
+    }
+
+    /** 页面快照：轮询判定通过与否的三类信号来源。 */
+    private data class CfSnapshot(
+        val title: String,
+        val bodyText: String,
+        val readyState: String,
+        val interactive: Boolean,
+        val pageHtml: String,
+    ) {
+        val hasDocument: Boolean
+            get() = title.isNotBlank() || bodyText.isNotBlank() || readyState == "interactive" || readyState == "complete"
+    }
+
+    /** 读一次页面快照（title / 正文前 4000 字 / readyState / 是否有可见的验证控件）。 */
+    private suspend fun snapshotCfPage(wv: WebView): CfSnapshot? = withContext(Dispatchers.Main) {
+        val deferred = CompletableDeferred<CfSnapshot?>()
+        runCatching {
+            wv.evaluateJavascript(CF_SNAPSHOT_JS) { result -> deferred.complete(parseCfSnapshot(decodeJsText(result))) }
+        }.onFailure { deferred.complete(null) }
+        withTimeoutOrNull(CF_SNAPSHOT_TIMEOUT_MS) { deferred.await() }
+    }
+
+    private const val CF_SNAPSHOT_TIMEOUT_MS = 3000L
+
+    private const val CF_SNAPSHOT_JS = """
+        (function(){
+          function visible(el){
+            var r = el.getBoundingClientRect();
+            var s = window.getComputedStyle(el);
+            return r.width > 4 && r.height > 4 && s.display !== 'none' && s.visibility !== 'hidden';
+          }
+          var selectors = ['input[type="checkbox"]','[role="checkbox"]','iframe[src*="turnstile"]','iframe[src*="challenges.cloudflare.com"]'];
+          var interactive = selectors.some(function(sel){
+            var list = document.querySelectorAll(sel);
+            for (var i = 0; i < list.length; i++) { if (visible(list[i])) return true; }
+            return false;
+          });
+          return JSON.stringify({
+            title: document.title || '',
+            bodyText: (document.body ? document.body.innerText : '').slice(0, 4000),
+            readyState: document.readyState || '',
+            interactive: interactive,
+            pageHtml: (document.documentElement ? document.documentElement.innerHTML : '').slice(0, 12000)
+          });
+        })()
+    """
+
+    /** evaluateJavascript 返回的是 JSON 字符串字面量，先解一层 JSON 再交给 [parseCfSnapshot]。 */
+    private fun decodeJsText(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        val trimmed = raw.trim()
+        if (trimmed == "null") return ""
+        return runCatching { org.json.JSONTokener(trimmed).nextValue()?.toString() ?: "" }.getOrDefault(trimmed)
+    }
+
+    private fun parseCfSnapshot(json: String): CfSnapshot? {
+        if (json.isBlank()) return null
+        return runCatching {
+            val obj = org.json.JSONObject(json)
+            CfSnapshot(
+                title = obj.optString("title", ""),
+                bodyText = obj.optString("bodyText", ""),
+                readyState = obj.optString("readyState", ""),
+                interactive = obj.optBoolean("interactive", false),
+                pageHtml = obj.optString("pageHtml", ""),
+            )
+        }.getOrNull()
     }
 
     private suspend fun waitGone(gone: CompletableDeferred<Unit>, ms: Long, tag: String) {

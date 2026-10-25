@@ -211,8 +211,12 @@ class UpdateDownloadService : android.app.Service() {
             .setAutoCancel(true)
             .setContentIntent(installIntent(file))
         notificationManager.notify(NOTIF_ID, builder.build())
-        // 退出前台但保留该通知（DETACH：通知不会被一并移除）
+        // 退出前台但保留该通知（DETACH：通知不会被一并移除），作为被系统拦截时的兜底入口
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+        // 下载完成后自动打开安装器：本服务此前已 startForeground，豁免后台启动 Activity 限制
+        UpdateDownloader.install(this, file)
+        // 清理历史更新包，保留刚下载的当前版本包（供下次跳过下载直接复用）
+        UpdateDownloader.cleanupOldApks(this, file.name)
     }
 
     private fun showFailed(version: String, channel: String) {

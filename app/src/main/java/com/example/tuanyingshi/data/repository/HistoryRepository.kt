@@ -9,9 +9,15 @@ import kotlinx.coroutines.flow.Flow
 interface HistoryRepository {
     fun observeHistory(): Flow<List<HistoryEntity>>
     fun observeExists(detailUrl: String): Flow<Boolean>
-    suspend fun record(anime: Anime, episode: Episode, position: Long, mode: SourceMode)
+    suspend fun record(
+        anime: Anime,
+        episode: Episode,
+        position: Long,
+        mode: SourceMode,
+        sourceName: String = "",
+    )
     /** 仅当该详情尚无历史记录时写入一条浏览记录（不覆盖播放进度）。 */
-    suspend fun recordBrowse(anime: Anime, mode: SourceMode)
+    suspend fun recordBrowse(anime: Anime, mode: SourceMode, sourceName: String = "")
     suspend fun remove(detailUrl: String)
     suspend fun deleteAll()
 }

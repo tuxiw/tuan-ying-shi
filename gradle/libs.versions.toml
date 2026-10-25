@@ -31,8 +31,15 @@ hilt = "2.51.1"
 hiltNavigation = "1.2.0"
 serialization = "1.6.3"
 
+# 后台周期任务：数据源订阅每 1 小时自动更新（进程被杀后仍由系统调度，断网自动重试）
+workRuntimeKtx = "2.10.0"
+
 # 扫码登录：相机扫码端（zxing-android-embedded 自带 zxing core + 扫码 Activity）
 zxingAndroidEmbedded = "4.3.0"
+
+# WebView 代理：androidx.webkit.ProxyController 是设置 WebView 代理的正式 API
+# （框架 android.webkit.ProxyController 为隐藏 API，反射在 MIUI 等 ROM 上被拦截）
+androidxWebkit = "1.12.1"
 
 # video-player 库模块所需的 SDK 版本
 compileSdk = "35"
@@ -57,6 +64,7 @@ androidx-material-icons-extended = { group = "androidx.compose.material", name =
 # M2 material：提供稳定的 pullrefresh（PullRefreshIndicator / rememberPullRefreshState），
 # 与 Material3 1.3.0 解耦，避免依赖特定 M3 版本。
 androidx-compose-material-m2 = { group = "androidx.compose.material", name = "material", version = "1.7.0" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "androidxWebkit" }
 
 # 新增业务依赖
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
@@ -82,6 +90,9 @@ jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 jsoupxpath = { group = "cn.wanghaomiao", name = "JsoupXpath", version.ref = "jsoupxpath" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttpLogging" }
+
+# 后台周期任务（数据源订阅每 1 小时自动更新）
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntimeKtx" }
 
 # hilt
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }

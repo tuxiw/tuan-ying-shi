@@ -96,7 +96,7 @@ object BackendAnimeSource : AnimeSource {
     override suspend fun getFilterData(
         zoneId: Int,
         tag: String?,
-        year: Int?,
+        year: String?,
         orderBy: String?,
         region: String?,
         type: String?,
@@ -106,7 +106,7 @@ object BackendAnimeSource : AnimeSource {
         val q = LinkedHashMap<String, String>()
         q["zoneId"] = zoneId.toString()
         if (!tag.isNullOrBlank()) q["tag"] = tag
-        if (year != null) q["year"] = year.toString()
+        if (!year.isNullOrBlank()) q["year"] = year
         if (!orderBy.isNullOrBlank()) q["orderBy"] = orderBy
         if (!region.isNullOrBlank()) q["region"] = region
         if (!type.isNullOrBlank()) q["type"] = type
