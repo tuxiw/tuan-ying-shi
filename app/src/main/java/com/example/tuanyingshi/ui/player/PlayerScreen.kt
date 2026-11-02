@@ -39,6 +39,8 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -93,6 +95,7 @@ import com.example.tuanyingshi.ui.components.ExpandableText
 import com.example.tuanyingshi.ui.components.LocalUserStatusRepository
 import com.example.tuanyingshi.ui.components.NsfwBlockedScaffold
 import com.example.tuanyingshi.ui.components.isTablet
+import com.example.tuanyingshi.ui.components.smallestWidthDp
 import com.example.tuanyingshi.ui.detail.ChannelTabs
 import com.example.tuanyingshi.ui.components.MediaSourceSheet
 import com.example.tuanyingshi.ui.components.EpisodeGrid
@@ -102,6 +105,14 @@ import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.ContentPrefs
 import com.example.tuanyingshi.util.DanmakuPrefs
 import com.example.tuanyingshi.util.PlaybackPrefs
+import com.example.tuanyingshi.util.PlayerMorePrefs
+import com.example.tuanyingshi.util.PipController
+import com.example.tuanyingshi.util.PlayerEnhancementPrefs
+import com.example.tuanyingshi.util.ScreenshotNotifier
+import com.example.tuanyingshi.util.resolveScreenshotDir
+import com.lanlinju.videoplayer.LoopMode
+import com.lanlinju.videoplayer.PlayerMoreConfig
+import com.lanlinju.videoplayer.enhancement.VideoEnhancementMode
 import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.isNsfw
 import com.example.tuanyingshi.util.log
@@ -112,6 +123,7 @@ import com.lanlinju.videoplayer.rememberVideoPlayerState
 import android.widget.Toast
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.example.tuanyingshi.danmaku.api.Danmaku
 import com.example.tuanyingshi.danmaku.api.DanmakuEvent
@@ -162,6 +174,8 @@ fun PlayerScreen(
     val currentSourceIcon by viewModel.currentSourceIcon.collectAsStateWithLifecycle()
     // 选择面板「当前源」高亮：与数据源卡同一个 id（资源源回退全局 currentSourceId）
     val sheetSourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
+    // 记忆播放：当前集从 episode_table 读出的续播进度（毫秒），交给 VideoPlayer 作初始 seek
+    val resumePosition by viewModel.resumePosition.collectAsStateWithLifecycle()
     // 次元城登录是否已失效（用于在错误页放「重新登录」入口，点击导航到登录页）
     val cycaniExpired by CycaniAuthManager.sessionExpired.collectAsStateWithLifecycle()
     // 弹幕数据（统一来自弹弹play 弹幕库，所有数据源的剧集都按番名+集名匹配加载）
@@ -175,6 +189,12 @@ fun PlayerScreen(
     val context = LocalContext.current
 
     var showSourceSheet by remember { mutableStateOf(false) }
+    // 投屏：设备选择面板 + 当前正在投屏的设备（用于面板里显示「停止投屏」）
+    var showCastSheet by remember { mutableStateOf(false) }
+    var castingDevice by remember { mutableStateOf<com.example.tuanyingshi.ui.player.cast.CastDevice?>(null) }
+    // 续播提示条：切到新视频且检测到历史进度时，展示「已从 mm:ss 继续播放 · 从头播放」
+    var showResumeBanner by remember { mutableStateOf(false) }
+    var resumeBannerPosition by remember { mutableStateOf(0L) }
     // 视频页安全提醒横幅：提示视频内广告/链接非本应用提供，防止用户上当受骗。可关闭（仅隐藏本次）。
     var showSecurityTip by remember { mutableStateOf(true) }
 
@@ -328,13 +348,137 @@ fun PlayerScreen(
         }
         playerState.control.setVideoResize(resolved)
     }
+
+    // 画质增强：读取「视频增强」偏好，进入播放页即应用超分模式，并随设置页变更实时生效。
+    val enhancementMode by PlayerEnhancementPrefs.enhancementMode.collectAsStateWithLifecycle()
+    LaunchedEffect(enhancementMode) {
+        playerState.setEnhancementMode(enhancementMode)
+    }
+    // 画质增强自动降级：随设置页开关实时生效。
+    val autoEnhancementOptimize by PlayerEnhancementPrefs.autoEnhancementOptimize.collectAsStateWithLifecycle()
+    LaunchedEffect(autoEnhancementOptimize) {
+        playerState.autoEnhancementOptimize = autoEnhancementOptimize
+    }
+    val autoEnhancementDowngradeFloor by PlayerEnhancementPrefs.autoEnhancementDowngradeFloor.collectAsStateWithLifecycle()
+    LaunchedEffect(autoEnhancementDowngradeFloor) {
+        playerState.autoEnhancementDowngradeFloor = autoEnhancementDowngradeFloor
+    }
+    // 截图 / 进度帧预览 / 播放信息层 / 手势 开关，供控件层与渲染层消费。
+    val gestureEnabled by PlayerEnhancementPrefs.gestureEnabled.collectAsStateWithLifecycle()
+    val screenshotEnabled by PlayerEnhancementPrefs.screenshotEnabled.collectAsStateWithLifecycle()
+    val framePreviewEnabled by PlayerEnhancementPrefs.framePreviewEnabled.collectAsStateWithLifecycle()
+    val statsEnabled by PlayerEnhancementPrefs.statsEnabled.collectAsStateWithLifecycle()
+    // 截图落盘位置：保存到「用户选择的下载目录 /img」，并在此发状态栏通知。
+    // 用 lambda 每次现取，用户在设置里改了下载位置后立刻生效。
+    DisposableEffect(playerState) {
+        playerState.screenshotDirProvider = { resolveScreenshotDir(context) }
+        playerState.onScreenshotSaved = { file, _ -> ScreenshotNotifier.notify(context, file) }
+        onDispose {
+            playerState.screenshotDirProvider = null
+            playerState.onScreenshotSaved = null
+        }
+    }
     // player 生命周期由本屏幕掌管：跨平板两栏/全屏分支切换时复用同一 player，
     // 不在 VideoPlayer 自身 dispose 时释放，故底层传 releaseOnDispose = false；
     // 屏幕整体退出时在此统一释放，避免泄漏。
     DisposableEffect(Unit) {
-        onDispose { playerState.player.release() }
+        onDispose {
+            // 退出播放页（含切后台被杀/直接关闭）：先把当前进度落库，再释放播放器。
+            // viewModelScope 独立于组合生命周期，recordProgress 内的协程可正常执行。
+            viewModel.recordProgress(playerState.player.currentPosition)
+            playerState.player.release()
+        }
     }
     val isFullscreen by playerState.isFullscreen
+
+    // ── 色彩辅助：偏好 → 播放器；面板里直接改播放器状态时回写偏好，保证换集 / 下次进入仍生效 ──
+    val colorAssistPref by PlayerEnhancementPrefs.colorAssistMode.collectAsStateWithLifecycle()
+    LaunchedEffect(colorAssistPref) {
+        playerState.setColorAssistMode(colorAssistPref)
+    }
+    val runtimeColorAssist by playerState.colorAssistMode
+    LaunchedEffect(runtimeColorAssist) {
+        if (PlayerEnhancementPrefs.colorAssistMode.value != runtimeColorAssist) {
+            PlayerEnhancementPrefs.setColorAssistMode(runtimeColorAssist)
+        }
+    }
+
+    // ── 小窗播放（画中画）：进入小窗后隐藏整套控制层（系统悬浮按钮接管播放/暂停），
+    //    退出小窗再交还；同时把视频比例同步给系统，避免小窗里出现大片黑边。 ──
+    val inPip by PipController.inPip.collectAsStateWithLifecycle()
+    val videoSize by playerState.videoSize
+    val videoAspectRatio = if (videoSize.height > 0) {
+        videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+    } else {
+        16f / 9f
+    }
+    LaunchedEffect(inPip) {
+        // 退出小窗后复位（进入小窗的置位在 onPip 里，必须早于系统 ON_STOP）
+        if (!inPip) playerState.inPipMode = false
+        if (inPip) playerState.hideControlUi() else playerState.showControlUi()
+    }
+    LaunchedEffect(inPip, videoAspectRatio) {
+        val activity = context as? Activity ?: return@LaunchedEffect
+        // 小窗里双击 → 切换「贴合画面 / 大窗」并记住选择（下次进小窗沿用同一档位）。
+        // Android 12+ 的双击放大是系统手势（事件不进应用），这条是给会分发事件的机型兜底。
+        playerState.pipToggleSize = if (inPip) {
+            {
+                val large = PipController.toggleSize(activity, videoAspectRatio)
+                Toast.makeText(context, if (large) "小窗已放大" else "小窗已还原", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            null
+        }
+        PipController.syncParams(activity, PipController.effectiveRatio(videoAspectRatio))
+    }
+
+    // 投屏（DLNA）：选择局域网内的电视 / 盒子并把当前片源推过去。
+    // 投屏成功后暂停本机播放，避免手机与电视同时出声；电视端自己去拉流，
+    // 因此无法携带 App 内的请求头（需要登录态 / 防盗链的源可能播不出来，面板上已提示）。
+    if (showCastSheet) {
+        com.example.tuanyingshi.ui.player.cast.CastDeviceSheet(
+            onDismiss = { showCastSheet = false },
+            activeDeviceName = castingDevice?.name,
+            onStop = {
+                val device = castingDevice
+                castingDevice = null
+                if (device != null) {
+                    scope.launch {
+                        com.example.tuanyingshi.ui.player.cast.DlnaCastManager.stop(device)
+                        Toast.makeText(context, "已停止投屏", Toast.LENGTH_SHORT).show()
+                        // 回到本机续播：投屏时手机是暂停在原进度上的，直接从那里接着播
+                        playerState.control.play()
+                    }
+                }
+            },
+            onCast = { device ->
+                val url = playUrl
+                if (url.isNullOrBlank()) {
+                    Toast.makeText(context, "当前没有可投屏的播放地址", Toast.LENGTH_SHORT).show()
+                } else {
+                    scope.launch {
+                        // 续播：把本机当前进度一起推给电视（DLNA 无起始位置参数，靠 Play 后补 Seek）
+                        val startAt = playerState.player.currentPosition
+                        val err = com.example.tuanyingshi.ui.player.cast.DlnaCastManager.cast(
+                            device = device,
+                            videoUrl = url,
+                            title = video?.episodeName ?: anime?.title ?: "投屏视频",
+                            startPositionMs = startAt,
+                        )
+                        if (err == null) {
+                            castingDevice = device
+                            // 本机暂停，避免双声道；进度照常记录，回来还能续播
+                            playerState.control.pause()
+                            viewModel.recordProgress(startAt)
+                            Toast.makeText(context, "已投屏到「${device.name}」", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "投屏失败：$err", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            },
+        )
+    }
 
     // ── 弹幕设置：从 DanmakuPrefs 读取全部偏好并组装 DanmakuConfig ──
     // 任一偏好变化都会触发重组 → rememberDanmakuHostState(config) 重建弹幕引擎，
@@ -431,6 +575,21 @@ fun PlayerScreen(
     // 播放结束状态（当前集自然播完）与「自动换集」偏好，供自动连播下一集判定
     val isEnded by playerState.isEnded
     val autoNextEpisode by PlaybackPrefs.autoNextEpisode.collectAsStateWithLifecycle()
+    // 「更多」面板里的循环播放 / 后台听视频 / 条目显隐（全部持久化，跨集跨页保持）
+    val loopMode by PlaybackPrefs.loopMode.collectAsStateWithLifecycle()
+    val backgroundPlay by PlaybackPrefs.backgroundPlayEnabled.collectAsStateWithLifecycle()
+    val hiddenMoreItems by PlayerMorePrefs.hiddenItems.collectAsStateWithLifecycle()
+    var showEditPlayerDialog by remember { mutableStateOf(false) }
+
+    // 「编辑播放器」：自定义「更多」面板里显示哪些条目（显隐持久化到 PlayerMorePrefs）
+    if (showEditPlayerDialog) {
+        EditPlayerPanelDialog(onDismiss = { showEditPlayerDialog = false })
+    }
+
+    // 循环模式同步给播放器：单集循环由播放器内置实现，列表循环在下面的播完回调里处理
+    LaunchedEffect(loopMode) { playerState.setLoopMode(loopMode) }
+    // 后台听视频：应用退到后台时不暂停（VideoPlayer 的 ON_STOP 分支据此决定是否暂停）
+    LaunchedEffect(backgroundPlay) { playerState.backgroundAudioEnabled = backgroundPlay }
 
     // 仅进入时按开关初始化一次全屏状态，不随屏幕旋转自动切换，
     // 避免“点击全屏按钮后自动横屏并放大”的问题。
@@ -446,16 +605,54 @@ fun PlayerScreen(
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
-    // 当前集自然播放结束后，按「自动换集」设置自动连播下一集
-    LaunchedEffect(isEnded) {
-        if (isEnded && autoNextEpisode) {
-            val idx = video?.currentEpisodeIndex ?: 0
-            val next = episodes.getOrNull(idx + 1)
-            if (next != null) {
-                viewModel.recordProgress(playerState.player.currentPosition)
-                viewModel.selectEpisode(next)
+    // 当前集自然播放结束后：
+    // - 列表循环：播下一集，最后一集回到第一集（与「自动连播」独立，即便连播关了也要接着放）；
+    // - 否则按「自动连播」设置播下一集（不回绕）。
+    // 注意单集循环不会走到这里：播放器用 REPEAT_MODE_ONE 自己循环，不产生「播放结束」状态。
+    LaunchedEffect(isEnded, loopMode, autoNextEpisode) {
+        if (!isEnded) return@LaunchedEffect
+        val idx = video?.currentEpisodeIndex ?: 0
+        val next = when {
+            loopMode == LoopMode.LIST -> episodes.getOrNull(idx + 1) ?: episodes.firstOrNull()
+            autoNextEpisode -> episodes.getOrNull(idx + 1)
+            else -> null
+        }
+        if (next != null && next.url != video?.episodeUrl) {
+            viewModel.recordProgress(playerState.player.currentPosition)
+            viewModel.selectEpisode(next)
+        }
+    }
+
+    // 周期保存播放进度（每 15 秒）：覆盖「播放中退出 / 切后台被杀」等未走返回键的场景，
+    // 保证记忆播放位置足够新鲜。仅在正在播放且未拖动时保存；走本地-only，避免后端进度接口被高频调用。
+    LaunchedEffect(playUrl) {
+        while (true) {
+            delay(15_000)
+            if (playerState.isPlaying.value && !playerState.isSeeking.value) {
+                viewModel.recordProgress(playerState.player.currentPosition, syncToBackend = false)
             }
         }
+    }
+
+    // 切集 / 换源 / 重试导致 playUrl 变化时，用本次进入的续播位置决定是否显示「续播提示条」
+    LaunchedEffect(playUrl) {
+        if (resumePosition > 3_000L) {
+            resumeBannerPosition = resumePosition
+            showResumeBanner = true
+        } else {
+            showResumeBanner = false
+        }
+    }
+    // 提示条自动消失：进入约 6 秒后收起（用户也可手动关闭 / 点「从头播放」/ 拖动进度条）
+    LaunchedEffect(showResumeBanner) {
+        if (showResumeBanner) {
+            delay(6_000)
+            showResumeBanner = false
+        }
+    }
+    // 用户手动拖动进度条（scrubbing）时立即收起提示条
+    LaunchedEffect(isSeeking) {
+        if (isSeeking) showResumeBanner = false
     }
 
     // 把 ViewModel 加载到的弹幕数据喂给弹幕引擎，并按播放进度联动。
@@ -552,7 +749,12 @@ fun PlayerScreen(
         "PlayerScreen: 交给 VideoPlayer url=${playUrl?.take(160)} headers=${video?.headers?.size ?: 0}".log("PlayerScreen")
     }
 
-    val isTabletDevice = isTablet()
+    // 进出小窗会改变「屏幕最小宽度」（小窗窗口只有两三百 dp），若让这个值随配置变化，
+    // 播放页会在「平板左右分栏」与「手机上下竖排」两套布局之间来回切换 ——
+    // VideoPlayer 被搬到另一个分支就会重新装载片源，进度被打回进入页面时的值
+    // （表现为「一切到小窗就从头播放」）。这里按进入页面时的形态锁定，整页生命周期内不变。
+    val smallestWidthDp = smallestWidthDp()
+    val isTabletDevice = remember(Unit) { smallestWidthDp >= 600 }
     // 选中 Hanime1 主数据源时，播放页评论区走 Hanime1 评论接口、简介区附带「系列/相关推荐」。
     val isHanime1 = com.example.tuanyingshi.util.SourceHolder.currentSourceMode ==
         com.example.tuanyingshi.util.SourceMode.Hanime1
@@ -588,15 +790,111 @@ fun PlayerScreen(
                 playUrl != null -> VideoPlayer(
                 modifier = Modifier.fillMaxSize(),
                 url = playUrl,
-                videoPosition = 0L,
+                // 记忆播放：进入即跳到上次进度（无进度时为 0，从头播放）
+                videoPosition = resumePosition,
                 playerState = playerState,
                 headers = video?.headers ?: emptyMap(),
                 releaseOnDispose = false,
                 onBackPress = { handleBack() },
-                onError = viewModel::onPlaybackError,
+                // 播放失败：带上当前进度，先落库再走失败处理
+                onError = { viewModel.onPlaybackError(playerState.player.currentPosition) },
+                gestureEnabled = gestureEnabled,
+                // 弹幕层：挂在播放器「视频画面之上、控制层之下」的槽位里。
+                // 这样弹幕既看得见（SurfaceView 会穿透窗口，画在它下面的内容不可见），
+                // 又不会盖住顶部 / 底部按钮与「更多」等覆盖面板 —— 因此面板打开时
+                // 不必再隐藏弹幕，弹幕照常按时间轴滚动，关掉面板也不会有跳帧。
+                overlay = {
+                    // 小窗里不挂弹幕：窗口只有两三百 dp，正常字号的弹幕会把整个画面糊满，
+                    // 也会被缩得完全看不清（小窗只保留视频画面本身）。
+                    if (danmakuOn && playUrl != null && error == null && !inPip) {
+                        // 与视频画面共用 adaptiveLayout 定尺居中：弹幕若自己另算 letterbox 内边距，
+                        // 一旦片源比例或 ResizeMode 与假设不符就会错位（“悬在画面中间”）。
+                        // videoSize 尚未就绪时传 0f：adaptiveLayout 内部与视频同样回退 16:9，保持同步。
+                        val vs = playerState.videoSize.value
+                        val ar = if (vs.width > 0 && vs.height > 0) {
+                            (vs.width * vs.pixelWidthHeightRatio) / vs.height
+                        } else 0f
+                        DanmakuHost(
+                            state = danmakuHostState,
+                            modifier = Modifier
+                                .adaptiveLayout(
+                                    aspectRatio = ar,
+                                    resizeMode = playerState.videoResizeMode.value,
+                                )
+                                .fillMaxSize(),
+                        )
+                    }
+                },
                 controller = {
-                    VideoPlayerControl(
+                    // 小窗（画中画）里不渲染控制层：系统悬浮按钮已提供播放 / 暂停，
+                    // 且小窗尺寸下这套控件会挤成一团看不清。
+                    if (!inPip) VideoPlayerControl(
                         state = playerState,
+                        screenshotEnabled = screenshotEnabled,
+                        framePreviewEnabled = framePreviewEnabled,
+                        statsEnabled = statsEnabled,
+                        // 「更多」面板：小窗 / 投屏 / 定时关闭 / 播放设置
+                        moreConfig = PlayerMoreConfig(
+                            // 小窗播放：进入系统画中画，继续在悬浮窗里看
+                            onPip = {
+                                val activity = context as? Activity
+                                if (activity == null) {
+                                    Toast.makeText(context, "当前页面不支持小窗播放", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    playerState.hideMoreUi()
+                                    // 先把进度落库：万一进小窗导致页面被重建，回来还能从此处续播
+                                    viewModel.recordProgress(playerState.player.currentPosition)
+                                    // 先置位再进入：部分机型进入小窗时 Activity 会收到 ON_STOP，
+                                    // 播放器默认在 ON_STOP 暂停 —— 小窗里画面仍可见，那样就成了「切小窗就停」。
+                                    playerState.inPipMode = true
+                                    if (!PipController.enter(activity, videoAspectRatio)) {
+                                        playerState.inPipMode = false
+                                        Toast.makeText(context, "当前设备不支持小窗播放", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            // 投屏：打开局域网设备选择面板
+                            onCast = {
+                                playerState.hideMoreUi()
+                                showCastSheet = true
+                            },
+                            autoPlayNext = autoNextEpisode,
+                            onAutoPlayNextChange = { PlaybackPrefs.setAutoNextEpisode(it) },
+                            loopMode = loopMode,
+                            onLoopModeChange = { PlaybackPrefs.setLoopMode(it) },
+                            backgroundAudio = backgroundPlay,
+                            onBackgroundAudioChange = { PlaybackPrefs.setBackgroundPlayEnabled(it) },
+                            onFeedback = {
+                                playerState.hideMoreUi()
+                                navController.navigate(Screen.Feedback.route)
+                            },
+                            onEditPlayer = {
+                                playerState.hideMoreUi()
+                                showEditPlayerDialog = true
+                            },
+                            // 选集：原先是播放器中间的选集面板，现在收进「更多」面板。
+                            // 点选后自动关闭面板（onClose 由面板内部调用），立刻看到切集结果。
+                            episodes = episodes.map { it.name },
+                            currentEpisodeIndex = video?.currentEpisodeIndex ?: -1,
+                            onEpisodeClick = { index ->
+                                val ep = episodes.getOrNull(index)
+                                if (ep != null) {
+                                    viewModel.recordProgress(playerState.player.currentPosition)
+                                    viewModel.selectEpisode(ep)
+                                }
+                            },
+                            hiddenItems = hiddenMoreItems,
+                        ),
+                        // 快速打开「播放设置」：从播放页直达，离开时生命周期 ON_STOP 会自动暂停。
+                        // 打开设置前先把当前进度落库——设置里可能改倍速 / 画质增强等会影响播放的项，
+                        // 甚至从设置页直接返回上级，回来时（或下次进来）都能从此处续播。
+                        onSettingsClick = {
+                            viewModel.recordProgress(playerState.player.currentPosition)
+                            // 当时正在播放 → 关掉设置回来后自动接着播（断点继播）；
+                            // 本来就是暂停状态则保持暂停，不擅自替用户做决定。
+                            if (playerState.isPlaying.value) playerState.resumeOnReturn = true
+                            navController.navigate(Screen.PlaybackSettings.route)
+                        },
                         title = anime?.title ?: "播放",
                         subtitle = video?.episodeName,
                         danmakuEnabled = danmakuOn,
@@ -610,15 +908,6 @@ fun PlayerScreen(
                                 viewModel.selectEpisode(next)
                             }
                         },
-                        // 选集面板数据与回调（索引 → 切集）
-                        episodes = episodes.map { it.name },
-                        onEpisodeClick = { index ->
-                            val ep = episodes.getOrNull(index)
-                            if (ep != null) {
-                                viewModel.recordProgress(playerState.player.currentPosition)
-                                viewModel.selectEpisode(ep)
-                            }
-                        },
                     )
                 }
                 )
@@ -626,24 +915,19 @@ fun PlayerScreen(
                 // 找源阶段显示 5 秒倒计时 / 自动切换提示，避免慢源时干等黑屏
                 else -> LoadingIndicator(loadingMsg)
             }
-            // 弹幕覆盖层：与视频画面共用 video-player 的 adaptiveLayout 定尺居中。
-            // 之前是弹幕层自己按「假设的宽高比」算 letterbox 内边距，而视频由 adaptiveLayout
-            // 按「真实 videoSize + 当前 ResizeMode」定尺，两套算法一旦不一致
-            // （片源非 16:9，或用户选了铺满/全屏/4:3 等），弹幕就会相对画面错位、
-            // 表现为“悬在画面中间”。改成同源修饰器后，任何比例/缩放模式下都精确贴合。
-            // Canvas 不拦截点击，底层控制层仍可操作。仅在弹幕开启且视频就绪时显示。
-            if (danmakuOn && playUrl != null && error == null) {
-                // videoSize 尚未就绪时传 0f：adaptiveLayout 内部与视频同样回退 16:9，保持同步。
-                val vs = playerState.videoSize.value
-                val ar = if (vs.width > 0 && vs.height > 0) (vs.width * vs.pixelWidthHeightRatio) / vs.height else 0f
-                DanmakuHost(
-                    state = danmakuHostState,
+            // 续播提示条：独立于控制层显隐，确保一进入就能看到「已从进度继续播放」并可一键从头播放
+            // 小窗里不显示：窗口太小，这条提示会压掉画面，也没法点。
+            if (showResumeBanner && playUrl != null && error == null && !inPip) {
+                ResumePlaybackBanner(
+                    positionMs = resumeBannerPosition,
+                    onPlayFromStart = {
+                        playerState.player.seekTo(0)
+                        showResumeBanner = false
+                    },
+                    onDismiss = { showResumeBanner = false },
                     modifier = Modifier
-                        .adaptiveLayout(
-                            aspectRatio = ar,
-                            resizeMode = playerState.videoResizeMode.value,
-                        )
-                        .fillMaxSize(),
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 92.dp),
                 )
             }
         }
@@ -746,16 +1030,24 @@ fun PlayerScreen(
     // 否则平板下会从 Row 分支切到 else(Column) 分支，导致 VideoPlayer 被重挂，
     // 触发库内 LaunchedEffect(url) 再次 prepare()+seekTo(0) —— 表现为「退出全屏播放位置归零 / 切换卡顿」。
     // 故全屏只改播放器尺寸与信息面板显隐，不切换根容器。
+    // 「只留播放器」= 全屏 或 小窗。
+    // 小窗（画中画）会把**整个 Activity** 塞进那个两三百 dp 的悬浮窗里，若还保留信息面板，
+    // 视频就被挤到窗口的 58% 宽度，旁边挂着一整块「温馨提示 / 弹幕匹配 / 简介·评论 / 数据源」，
+    // 在小窗里既看不清也用不上。小窗的目的是「一边干别的一边看画面」，所以与全屏同样处理：
+    // 播放器占满、其余全部不渲染。
+    // 注意：这里只是改尺寸与显隐，根容器分支仍按 isTabletDevice（进页时锁定）走，
+    // VideoSurface 保持在组合树的同一槽位，不会触发重新装载片源（进度被打回的坑）。
+    val playerOnly = isFullscreen || inPip
     Box(Modifier.fillMaxSize()) {
         if (isTabletDevice) {
-            // 平板：左右分栏；全屏时播放器占满整行、隐藏信息面板（VideoSurface 始终在 Row 同一槽位）。
+            // 平板：左右分栏；全屏 / 小窗时播放器占满整行、隐藏信息面板（VideoSurface 始终在 Row 同一槽位）。
             Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 VideoSurface(
                     Modifier
-                        .weight(if (isFullscreen) 1f else 0.58f)
+                        .weight(if (playerOnly) 1f else 0.58f)
                         .fillMaxHeight(),
                 )
-                if (!isFullscreen) {
+                if (!playerOnly) {
                     Column(Modifier.weight(0.42f).fillMaxHeight()) {
                         if (showSecurityTip) {
                             SecurityWarningBanner(onDismiss = { showSecurityTip = false })
@@ -773,17 +1065,17 @@ fun PlayerScreen(
                 }
             }
         } else {
-            // 手机：竖排；全屏时播放器占满、隐藏信息面板（VideoSurface 始终在 Column 同一槽位）。
+            // 手机：竖排；全屏 / 小窗时播放器占满、隐藏信息面板（VideoSurface 始终在 Column 同一槽位）。
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 VideoSurface(
                     Modifier
                         .fillMaxWidth()
-                        .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f)),
+                        .then(if (playerOnly) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f)),
                 )
-                if (!isFullscreen && showSecurityTip) {
+                if (!playerOnly && showSecurityTip) {
                     SecurityWarningBanner(onDismiss = { showSecurityTip = false })
                 }
-                if (!isFullscreen) {
+                if (!playerOnly) {
                     InfoPanel(
                         Modifier.fillMaxWidth().weight(1f),
                         onOpenSourceSheet = {

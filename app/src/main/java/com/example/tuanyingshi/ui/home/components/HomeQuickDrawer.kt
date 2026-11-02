@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.example.tuanyingshi.ui.theme.LocalThemePackAssets
 import com.example.tuanyingshi.data.remote.backend.BackendAccount
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.BackendPrefs
@@ -83,12 +84,25 @@ fun HomeQuickDrawerContent(
     val navLabels by UiPrefs.navLabelsVisible.collectAsStateWithLifecycle()
 
     ModalDrawerSheet(modifier = modifier.width(306.dp)) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 16.dp),
-        ) {
+        val assets = LocalThemePackAssets.current
+        val sideBg = assets?.sideBg
+        Box(Modifier.fillMaxSize()) {
+            // 主题套装侧栏背景图（side_bg）；无则不画，由抽屉自身 surface 兜底。
+            // matchParentSize()：尺寸由抽屉内容决定，背景图不参与测量（不撑大抽屉）。
+            if (sideBg != null) {
+                AsyncImage(
+                    model = sideBg,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 16.dp),
+            ) {
             /* ═══ 1. 账号区 ═══ */
             val displayName = when {
                 !backendMode -> "本地模式"
@@ -253,6 +267,7 @@ fun HomeQuickDrawerContent(
                 onClose()
                 navController.navigate(Screen.Settings.route)
             }
+        }
         }
     }
 }

@@ -1,9 +1,12 @@
 package com.example.tuanyingshi.ui.mine
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,8 +32,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Star
@@ -60,30 +66,34 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import coil.compose.AsyncImage
 import com.example.tuanyingshi.data.remote.api.cycani.CycaniProfile
 import com.example.tuanyingshi.data.remote.backend.BackendAccount
 import com.example.tuanyingshi.ui.components.isTablet
 import com.example.tuanyingshi.ui.components.maxContentWidth
 import com.example.tuanyingshi.ui.navigation.Screen
+import com.example.tuanyingshi.ui.theme.LocalThemePackAssets
 import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.SourceMode
+import com.example.tuanyingshi.util.ThemeMode
+import com.example.tuanyingshi.util.ThemePrefs
 import kotlinx.coroutines.launch
 
 /**
- * 我的页面（重设计版）：
- *  - 顶部标题栏：「我的」+ 右上设置入口
- *  - 资料卡：头像（次元城源站头像 / 后端头像 / Person 占位）+ 编辑徽标 + 昵称 + ID
- *    +（次元城）用户组/邮箱；可点击时右侧出现箭头（登录 / 查看次元城账号详情）
- *  - 影视会员卡（仅非后端模式；后端模式下无对应能力，隐藏）
+ * 我的页面（头图式布局，参考 B 站「我的」页）：
+ *  - 头图区：整宽大图延伸到状态栏之下（edge-to-edge）；右上角白色图标
+ *    （主题套装 / 明暗切换 / 设置）；左下角圆形描边头像 + 昵称 + ID
+ *    +（次元城）用户组/邮箱，可点击时右侧出现箭头（登录 / 查看次元城账号详情）
  *  - 快捷入口卡：浏览历史 / 收藏 / 追番 / 评分（后端 4 项，本地 3 项）
  *  - 功能网格卡：帮助反馈 / 我的下载 /（后端已登录）扫一扫 / 退出登录
  *
  * 平板适配（sw600dp 判定见 [isTablet]）：
  *  - 内容整体限宽 [maxContentWidth] 并 TopCenter 居中，避免超宽屏拉曝；
- *  - 双栏布局：左栏（0.42）资料卡 + 会员卡，右栏（0.58）快捷入口卡 + 功能网格卡（4 列）；
- *  - 手机端单栏纵排，功能网格 3 列；头像 / 会员卡 / 字号按档位放大。
+ *  - 头图加高到 260dp；下方双栏：左=快捷入口卡，右=功能网格卡（3 列）；
+ *  - 手机端头图 220dp、单栏纵排，功能网格 3 列。
  *
- * 后端模式下：资料区展示登录用户并支持点击登录；会员中心等无后端支持的功能直接隐藏
+ * 未应用主题套装时，头图用主色 → 次色渐变兜底，保证页面始终有头图区。
+ * 后端模式下：资料区展示登录用户并支持点击登录；无后端支持的功能直接隐藏
  * （见 [BackendAccount] / [BackendPrefs]）。开发者选项入口在「设置 → 其他」，
  * 连点版本号 7 次解锁后显示。
  */
@@ -190,78 +200,47 @@ fun MineScreen(
                 .widthIn(max = maxContentWidth),
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
-            // 顶部标题栏：「我的」+ 设置
+            // 头图区：整宽大图延伸到状态栏之下，右上角白色操作图标，
+            // 头像 + 昵称 + ID 叠在图上（参考 B 站「我的」页视觉）。
             item {
-                MineTopBar(onSettings = { navController.navigate(Screen.Settings.route) })
+                MineHeaderSection(
+                    tablet = tablet,
+                    name = profileName,
+                    idLine = profileIdLine,
+                    extra = profileExtra,
+                    cycaniProfile = cycaniProfile,
+                    cycaniMode = cycaniMode,
+                    backendAvatarUrl = backendAvatarUrl,
+                    clickable = profileClickable,
+                    onClick = onProfileClick,
+                    onThemeStore = { navController.navigate(Screen.ThemeStore.route) },
+                    onSettings = { navController.navigate(Screen.Settings.route) },
+                )
             }
 
             if (tablet) {
-                // 平板双栏：左=资料+会员，右=快捷入口+功能网格
+                // 平板双栏：左=快捷入口，右=功能网格（资料已上移到头图区）
                 item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Column(
-                            modifier = Modifier.weight(0.42f),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            ProfileCard(
-                                name = profileName,
-                                idLine = profileIdLine,
-                                extra = profileExtra,
-                                cycaniProfile = cycaniProfile,
-                                cycaniMode = cycaniMode,
-                                backendAvatarUrl = backendAvatarUrl,
-                                showEditBadge = !cycaniMode,
-                                clickable = profileClickable,
-                                onClick = onProfileClick,
-                                tablet = true,
-                            )
-                            if (!backendMode) {
-                                SvipCard(tablet = true)
-                            }
-                        }
-                        Column(
-                            modifier = Modifier.weight(0.58f),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             SectionCard {
                                 QuickEntriesRow(quickEntries)
                             }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
                             SectionCard {
-                                FunGrid(fnItems, columns = 4)
+                                FunGrid(fnItems, columns = 3)
                             }
                         }
                     }
                 }
             } else {
                 // 手机单栏纵排
-                item {
-                    ProfileCard(
-                        name = profileName,
-                        idLine = profileIdLine,
-                        extra = profileExtra,
-                        cycaniProfile = cycaniProfile,
-                        cycaniMode = cycaniMode,
-                        backendAvatarUrl = backendAvatarUrl,
-                        showEditBadge = !cycaniMode,
-                        clickable = profileClickable,
-                        onClick = onProfileClick,
-                        tablet = false,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                }
-                if (!backendMode) {
-                    item {
-                        SvipCard(
-                            tablet = false,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                        )
-                    }
-                }
                 item {
                     SectionCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                         QuickEntriesRow(quickEntries)
@@ -289,256 +268,214 @@ fun MineScreen(
     }
 }
 
-/** 顶部标题栏：「我的」标题 + 右上设置入口。 */
-@Composable
-private fun MineTopBar(onSettings: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "我的",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = onSettings) {
-            Icon(
-                imageVector = Icons.Filled.Tune,
-                contentDescription = "设置",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-    }
-}
-
 /**
- * 资料卡：头像 + 昵称 + ID（+ 次元城用户组/邮箱），可点击时右侧箭头。
- * 头像优先级：次元城源站头像 > 后端头像 > Person 占位。
+ * 头图区（参考 B 站「我的」页视觉）：整宽大图一直延伸到状态栏之下（edge-to-edge），
+ * 右上角一排白色操作图标（主题套装 / 明暗切换 / 设置），
+ * 左下角圆形描边头像 + 昵称 + ID 叠加在图上；未应用主题套装时用主色渐变兜底。
+ *
+ * 头像优先级：次元城源站头像 > 后端头像 > Person 占位（与改造前资料卡一致）。
+ * 点击行为沿用原资料卡语义：仅「后端模式未登录」或「次元城模式」可点（登录 / 账号详情）。
  */
 @Composable
-private fun ProfileCard(
+private fun MineHeaderSection(
+    tablet: Boolean,
     name: String,
     idLine: String,
     extra: String?,
     cycaniProfile: CycaniProfile?,
     cycaniMode: Boolean,
     backendAvatarUrl: String?,
-    showEditBadge: Boolean,
     clickable: Boolean,
     onClick: () -> Unit,
-    tablet: Boolean,
-    modifier: Modifier = Modifier,
+    onThemeStore: () -> Unit,
+    onSettings: () -> Unit,
 ) {
-    val avatarBoxSize = if (tablet) 96.dp else 72.dp
-    val avatarSize = if (tablet) 84.dp else 64.dp
-    val badgeSize = if (tablet) 26.dp else 22.dp
-    val corner = RoundedCornerShape(20.dp)
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = corner,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Box(
-            modifier = Modifier
-                .clip(corner)
-                // 顶部一点主色渐隐，让资料卡在卡片群里更有「头部」感
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                            MaterialTheme.colorScheme.surfaceVariant,
+    val header = LocalThemePackAssets.current?.headMyselfBg
+    val themeConfig by ThemePrefs.config.collectAsStateWithLifecycle()
+    val isDark = when (themeConfig.mode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    val headerHeight = if (tablet) 260.dp else 220.dp
+    val avatarSize = if (tablet) 76.dp else 64.dp
+    val nameSize = if (tablet) 21.sp else 18.sp
+
+    Box(modifier = Modifier.fillMaxWidth().height(headerHeight)) {
+        // 背景：主题套装头图；未应用套装时主色渐变兜底，保证「我的」页始终有头图区
+        if (header != null) {
+            AsyncImage(
+                model = header,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to MaterialTheme.colorScheme.primary,
+                            1.0f to MaterialTheme.colorScheme.tertiary,
                         ),
                     ),
+            )
+        }
+
+        // 顶部渐隐暗化：edge-to-edge 下保证状态栏图标（时间/电量）在亮色头图上仍可读
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color(0x73000000),
+                        0.22f to Color.Transparent,
+                    ),
                 ),
+        )
+        // 底部渐隐暗化：保证叠加在图上的头像与白色文字始终有足够对比度
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.45f to Color.Transparent,
+                        1.0f to Color(0xB3000000),
+                    ),
+                ),
+        )
+
+        // 右上角操作图标（白色线形，与 B 站一致）；statusBarsPadding 避开状态栏
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(end = 4.dp),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(corner)
-                    .clickable(enabled = clickable, onClick = onClick)
-                    .padding(horizontal = 20.dp, vertical = if (tablet) 22.dp else 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(modifier = Modifier.size(avatarBoxSize)) {
-                    when {
-                        // 次元城源站账号：展示源站头像，无头像时用用户名首字母占位
-                        cycaniMode -> CycaniAvatar(
-                            profile = cycaniProfile,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(avatarSize),
-                        )
-                        // 后端模式：展示后端保存的头像
-                        backendAvatarUrl != null -> AsyncImage(
-                            model = backendAvatarUrl,
-                            contentDescription = "头像",
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(avatarSize)
-                                .clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                        )
-                        else -> Box(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(avatarSize)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Person,
-                                contentDescription = null,
-                                modifier = Modifier.size(if (tablet) 48.dp else 40.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    // 源站账号不可在 app 内编辑，隐藏编辑徽标
-                    if (showEditBadge) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .size(badgeSize)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.background)
-                                .padding(2.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Edit,
-                                    contentDescription = "编辑资料",
-                                    modifier = Modifier
-                                        .padding(3.dp)
-                                        .size(if (tablet) 14.dp else 12.dp),
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                )
-                            }
-                        }
-                    }
-                }
+            IconButton(onClick = onThemeStore) {
+                Icon(
+                    imageVector = Icons.Filled.Palette,
+                    contentDescription = "主题套装",
+                    tint = Color.White,
+                )
+            }
+            // 明暗切换：若当前正跟随主题套装的明暗模式，先自动关掉「跟随套装明暗模式」，
+            // 否则套装的 color_mode 会覆盖这次手动选择，点了没反应。
+            IconButton(onClick = {
+                if (ThemePrefs.getConfig().packFollowColorMode) ThemePrefs.setPackFollowColorMode(false)
+                ThemePrefs.setMode(if (isDark) ThemeMode.LIGHT else ThemeMode.DARK)
+            }) {
+                Icon(
+                    imageVector = if (isDark) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                    contentDescription = if (isDark) "切换到亮色" else "切换到暗色",
+                    tint = Color.White,
+                )
+            }
+            IconButton(onClick = onSettings) {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = "设置",
+                    tint = Color.White,
+                )
+            }
+        }
 
-                Spacer(Modifier.size(if (tablet) 20.dp else 16.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
+        // 左下角资料行：头像 + 昵称 + ID（+ 次元城用户组/邮箱），可点时有右箭头
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .clickable(enabled = clickable, onClick = onClick)
+                .padding(start = 20.dp, end = 16.dp, bottom = if (tablet) 22.dp else 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MineAvatar(
+                size = avatarSize,
+                cycaniMode = cycaniMode,
+                cycaniProfile = cycaniProfile,
+                backendAvatarUrl = backendAvatarUrl,
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    color = Color.White,
+                    fontSize = nameSize,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = idLine,
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = if (tablet) 14.sp else 12.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (extra != null) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        text = name,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = if (tablet) 20.sp else 17.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        text = extra,
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = if (tablet) 13.sp else 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = idLine,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = if (tablet) 13.sp else 12.sp,
-                    )
-                    if (extra != null) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = extra,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = if (tablet) 13.sp else 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
-
-                // 可点击时给一个右侧箭头，增强可点性暗示
-                if (clickable) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(if (tablet) 28.dp else 22.dp),
-                    )
-                }
+            }
+            if (clickable) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(if (tablet) 28.dp else 22.dp),
+                )
             }
         }
     }
 }
 
-/** 影视会员卡（仅非后端模式展示；TODO: 会员中心）。 */
+/** 头图上的圆形头像：白色描边，与 B 站「我的」页一致。 */
 @Composable
-private fun SvipCard(tablet: Boolean, modifier: Modifier = Modifier) {
+private fun MineAvatar(
+    size: androidx.compose.ui.unit.Dp,
+    cycaniMode: Boolean,
+    cycaniProfile: CycaniProfile?,
+    backendAvatarUrl: String?,
+) {
     Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(if (tablet) 160.dp else 132.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = { /* TODO: 会员中心 */ }),
+        modifier = Modifier
+            .size(size)
+            .border(2.dp, Color.White, CircleShape)
+            .clip(CircleShape),
+        contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = R.drawable.svip_card,
-            contentDescription = "影视会员",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        0.0f to Color(0xCC000000),
-                        0.55f to Color(0x66000000),
-                        1.0f to Color.Transparent,
-                    )
-                ),
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "影视畅享SVIP",
-                        color = Color(0xFFFFD700),
-                        fontSize = if (tablet) 20.sp else 18.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF4CAF50)),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "生效中",
-                        color = Color.White,
-                        fontSize = if (tablet) 14.sp else 13.sp,
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "过期时间：长期有效",
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = if (tablet) 14.sp else 13.sp,
+        when {
+            cycaniMode -> CycaniAvatar(
+                profile = cycaniProfile,
+                modifier = Modifier.fillMaxSize(),
+            )
+            backendAvatarUrl != null -> AsyncImage(
+                model = backendAvatarUrl,
+                contentDescription = "头像",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            else -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(size * 0.6f),
+                    tint = Color.White.copy(alpha = 0.9f),
                 )
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.size(if (tablet) 32.dp else 28.dp),
-            )
         }
     }
 }

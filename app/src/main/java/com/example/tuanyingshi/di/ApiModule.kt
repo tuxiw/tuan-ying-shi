@@ -9,6 +9,8 @@ import com.example.tuanyingshi.data.repository.FavoriteRepository
 import com.example.tuanyingshi.data.repository.FavoriteRepositoryImpl
 import com.example.tuanyingshi.data.repository.HistoryRepository
 import com.example.tuanyingshi.data.repository.HistoryRepositoryImpl
+import com.example.tuanyingshi.data.repository.LocalProgressRepository
+import com.example.tuanyingshi.data.repository.LocalProgressRepositoryImpl
 import com.example.tuanyingshi.domain.repository.AnimeRepository
 import dagger.Binds
 import dagger.Module
@@ -42,4 +44,8 @@ abstract class ApiModule {
     @Singleton
     @Binds
     abstract fun providesDownloadRepository(downloadRepositoryImpl: DownloadRepositoryImpl): DownloadRepository
+
+    @Singleton
+    @Binds
+    abstract fun providesLocalProgressRepository(localProgressRepositoryImpl: LocalProgressRepositoryImpl): LocalProgressRepository
 }

@@ -34,12 +34,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +54,8 @@ import androidx.navigation.NavController
 import com.example.tuanyingshi.util.ProxyHolder
 import com.example.tuanyingshi.util.ProxyMode
 import com.example.tuanyingshi.util.ProxyType
+import com.example.tuanyingshi.util.AppHosts
+import com.example.tuanyingshi.util.AppHostsPrefs
 import android.widget.Toast
 
 /**
@@ -301,6 +306,10 @@ fun ProxySettingsContent(
         }
 
         Spacer(Modifier.height(8.dp))
+        SectionTitle("Hosts 优化")
+        HostsOptimizationCard()
+
+        Spacer(Modifier.height(8.dp))
         Button(
             onClick = { onSave() },
             enabled = !saving,
@@ -386,5 +395,134 @@ private fun ProtocolChip(
         contentAlignment = Alignment.Center,
     ) {
         Text(text = label, color = textColor, fontSize = 14.sp)
+    }
+}
+
+/**
+ * Hosts 优化卡片（全局网络设置）：
+ * - 内置 Hosts 开关（默认关闭）：开启后 hanime1 / getchu / github 等域解析到 Han1meViewer 的内置 IP；
+ * - 自定义 Hosts（类 /etc/hosts，每行 `域名 IP` 或 `IP 域名`，支持 `#` 注释，始终生效）：
+ *   可用于填镜像 / 直连 IP，或覆盖任意域名的解析，独立于内置开关；
+ * - 实时校验 + 生效 IP 预览。
+ *
+ * 通过 [com.example.tuanyingshi.util.ProxyHolder.applyProxy] 统一挂载到所有 OkHttp 客户端，
+ * 因此是全局生效（不仅限 Hanime1）。
+ */
+@Composable
+private fun HostsOptimizationCard() {
+    val useBuiltIn by AppHostsPrefs.useBuiltInFlow.collectAsStateWithLifecycle()
+    val savedCustom by AppHostsPrefs.customHostsFlow.collectAsStateWithLifecycle()
+    var text by remember(savedCustom) { mutableStateOf(savedCustom) }
+    val errors = remember(text) { AppHosts.validateHostsFile(text) }
+    val showError = text.isNotBlank() && errors.isNotEmpty()
+
+    val builtInDomains = AppHosts.builtInDomains()
+    // 自定义中、且不在内置表内的域名（补充展示）
+    val customOnlyDomains = remember(savedCustom) {
+        AppHosts.parseHostsFile(savedCustom).keys.filter { it !in builtInDomains }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "启用内置 Hosts",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "内置 hanime1 / getchu / github 等域的可靠 IP，绕过 DNS 污染 / 直连超时",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+                Switch(checked = useBuiltIn, onCheckedChange = { AppHostsPrefs.setUseBuiltInHosts(it) })
+            }
+
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    val errs = AppHosts.validateHostsFile(it)
+                    // 仅在「全部有效」或「清空」时落盘，避免把非法行写进生效配置
+                    if (errs.isEmpty()) AppHostsPrefs.customHostsData = it
+                    else if (it.isBlank()) AppHostsPrefs.customHostsData = ""
+                },
+                label = { Text("自定义 Hosts（可选，每行：域名 IP）") },
+                placeholder = {
+                    Text("示例：\nhanime1.me 1.2.3.4\n192.168.1.10 my.site.com")
+                },
+                singleLine = false,
+                minLines = 3,
+                isError = showError,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (showError) {
+                Spacer(Modifier.height(6.dp))
+                errors.forEach { err ->
+                    Text(
+                        text = err,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "生效预览（域名 → IP）",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(4.dp))
+
+            builtInDomains.forEach { d ->
+                val ips = AppHosts.getEffectiveIps(d)
+                if (ips.isNotEmpty()) {
+                    Text(
+                        text = "• $d → ${ips.joinToString(", ")}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+            customOnlyDomains.forEach { d ->
+                val ips = AppHosts.getEffectiveIps(d)
+                if (ips.isNotEmpty()) {
+                    Text(
+                        text = "• $d → ${ips.joinToString(", ")}（自定义）",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+
+            if (useBuiltIn.not() && savedCustom.isBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "未启用：所有域名走系统 DNS 解析。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
     }
 }

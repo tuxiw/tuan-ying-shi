@@ -22,6 +22,7 @@ import com.example.tuanyingshi.ui.theme.TuanyingshiTheme
 import com.example.tuanyingshi.util.ExternalIntentBus
 import com.example.tuanyingshi.util.ExternalPlayRequest
 import com.example.tuanyingshi.util.NavIntentBus
+import com.example.tuanyingshi.util.PipController
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
@@ -65,6 +66,19 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleExternalIntent(intent)
         handleNavRoute(intent)
+    }
+
+    /**
+     * 小窗播放（画中画）状态回报：进入 / 退出小窗时通知 Compose 侧，
+     * 播放页据此隐藏整套控制层（小窗里由系统悬浮按钮接管播放/暂停）。
+     */
+    @Deprecated("Deprecated in Java")
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PipController.onPipModeChanged(isInPictureInPictureMode)
     }
 
     private fun handleExternalIntent(intent: Intent?) {

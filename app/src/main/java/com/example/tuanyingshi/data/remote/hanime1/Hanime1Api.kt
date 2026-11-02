@@ -53,6 +53,10 @@ object Hanime1Api {
     private val host: String
         get() = runCatching { java.net.URI(baseUrl).host }.getOrDefault("hanime1.me")
 
+    /** 当前选中的 Hanime1 域名（如 `hanime1.me`），供 [com.example.tuanyingshi.util.AppHosts] 与设置页预览使用。 */
+    val currentHost: String
+        get() = host
+
     // ───────────────────────── 内部请求 ─────────────────────────
 
     /**

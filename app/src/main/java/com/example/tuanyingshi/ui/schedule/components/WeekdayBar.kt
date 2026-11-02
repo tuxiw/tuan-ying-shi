@@ -25,10 +25,23 @@ import com.example.tuanyingshi.ui.schedule.ScheduleViewModel
 /**
  * 排期表顶部星期切换条（周一到周日横滑）。
  * 与外层 HorizontalPager 联动：点击标签通过 [onSelect] 触发 pager 滑动，选中态由 [selectedIndex] 决定。
+ *
+ * @param overImage 本行是否被 head_bg 头图覆盖。为 true 时改白色配色
+ *   （未选中白 72% / 选中纯白，指示器白色），与首页分类标签行保持一致。
  */
 @Composable
-fun WeekdayBar(selectedIndex: Int, onSelect: (Int) -> Unit) {
+fun WeekdayBar(
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    overImage: Boolean = false,
+) {
     val labels = ScheduleViewModel.weekdayLabels
+    val unselectedColor = if (overImage) {
+        Color.White.copy(alpha = 0.72f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val selectedColor = if (overImage) Color.White else MaterialTheme.colorScheme.primary
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -47,7 +60,7 @@ fun WeekdayBar(selectedIndex: Int, onSelect: (Int) -> Unit) {
             ) {
                 Text(
                     text = label,
-                    color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (sel) selectedColor else unselectedColor,
                     fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -55,7 +68,7 @@ fun WeekdayBar(selectedIndex: Int, onSelect: (Int) -> Unit) {
                     modifier = Modifier
                         .width(if (sel) 24.dp else 1.dp)
                         .height(2.dp)
-                        .background(if (sel) MaterialTheme.colorScheme.primary else Color.Transparent),
+                        .background(if (sel) selectedColor else Color.Transparent),
                 )
             }
         }

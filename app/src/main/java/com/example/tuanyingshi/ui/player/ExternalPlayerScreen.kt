@@ -35,7 +35,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import android.widget.Toast
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,16 +51,25 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.ui.components.CenteredMessage
 import com.example.tuanyingshi.util.contentUriToFilePath
 import com.example.tuanyingshi.util.copyContentUriToCache
 import com.example.tuanyingshi.util.isInAppPrivateDir
 import com.example.tuanyingshi.util.rememberStorageAccessRequester
 import com.example.tuanyingshi.util.shouldRequestStorageAccess
+import com.example.tuanyingshi.util.PlayerEnhancementPrefs
+import com.example.tuanyingshi.util.PlaybackPrefs
+import com.example.tuanyingshi.util.PlayerMorePrefs
+import com.example.tuanyingshi.util.ScreenshotNotifier
+import com.example.tuanyingshi.util.resolveScreenshotDir
+import com.lanlinju.videoplayer.enhancement.VideoEnhancementMode
 import com.lanlinju.videoplayer.VideoPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.lanlinju.videoplayer.PlayerMoreConfig
 import com.lanlinju.videoplayer.VideoPlayerControl
 import com.lanlinju.videoplayer.rememberVideoPlayerState
 import java.io.File
@@ -191,7 +205,105 @@ fun ExternalPlayerScreen(
     }
     val isFullscreen by playerState.isFullscreen
 
+    val localProgressVm: LocalPlayerProgressViewModel = hiltViewModel()
+    val resumeKey = playUrl ?: uri
+
+    // 续播：按播放用的稳定地址（真实文件路径 / 缓存文件 / http(s) 链接）记忆进度。
+    // 进入前先读，读到再渲染播放器，避免「打开即从头」或误用旧进度。
+    var resumePosition by remember(resumeKey) { mutableStateOf<Long?>(null) }
+    var showResumeBanner by remember { mutableStateOf(false) }
+    var resumeBannerPosition by remember { mutableStateOf(0L) }
+    val isSeeking by playerState.isSeeking
+    val isPlaying by playerState.isPlaying
+
+    LaunchedEffect(resumeKey) {
+        resumePosition = localProgressVm.getPosition(resumeKey)
+    }
+    LaunchedEffect(resumePosition) {
+        val pos = resumePosition ?: return@LaunchedEffect
+        if (pos > 3_000L) {
+            resumeBannerPosition = pos
+            showResumeBanner = true
+        } else {
+            showResumeBanner = false
+        }
+    }
+    LaunchedEffect(showResumeBanner) {
+        if (showResumeBanner) {
+            delay(6_000)
+            showResumeBanner = false
+        }
+    }
+    LaunchedEffect(isSeeking) { if (isSeeking) showResumeBanner = false }
+    LaunchedEffect(resumeKey) {
+        while (true) {
+            delay(15_000)
+            val pos = playerState.player.currentPosition
+            val dur = playerState.player.duration
+            if (playerState.isPlaying.value && !playerState.isSeeking.value && pos > 0) {
+                localProgressVm.save(resumeKey, displayName, pos, dur)
+            }
+        }
+    }
+    DisposableEffect(resumeKey) {
+        onDispose {
+            localProgressVm.save(
+                resumeKey,
+                displayName,
+                playerState.player.currentPosition,
+                playerState.player.duration,
+            )
+        }
+    }
+
     LaunchedEffect(Unit) { playerState.control.setFullscreen(isLandscape) }
+
+    // 画质增强：读取「视频增强」偏好，进入播放页即应用超分模式，并随设置页变更实时生效。
+    val enhancementMode by PlayerEnhancementPrefs.enhancementMode.collectAsStateWithLifecycle()
+    LaunchedEffect(enhancementMode) {
+        playerState.setEnhancementMode(enhancementMode)
+    }
+    // 画质增强自动降级：随设置页开关实时生效。
+    val autoEnhancementOptimize by PlayerEnhancementPrefs.autoEnhancementOptimize.collectAsStateWithLifecycle()
+    LaunchedEffect(autoEnhancementOptimize) {
+        playerState.autoEnhancementOptimize = autoEnhancementOptimize
+    }
+    val autoEnhancementDowngradeFloor by PlayerEnhancementPrefs.autoEnhancementDowngradeFloor.collectAsStateWithLifecycle()
+    LaunchedEffect(autoEnhancementDowngradeFloor) {
+        playerState.autoEnhancementDowngradeFloor = autoEnhancementDowngradeFloor
+    }
+    val gestureEnabled by PlayerEnhancementPrefs.gestureEnabled.collectAsStateWithLifecycle()
+    // 「更多」面板：后台听视频与条目显隐（与在线播放页共用同一套偏好）
+    val backgroundPlay by PlaybackPrefs.backgroundPlayEnabled.collectAsStateWithLifecycle()
+    val hiddenMoreItems by PlayerMorePrefs.hiddenItems.collectAsStateWithLifecycle()
+    var showEditPlayerDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(backgroundPlay) { playerState.backgroundAudioEnabled = backgroundPlay }
+
+    // 「编辑播放器」：自定义「更多」面板显示哪些条目
+    if (showEditPlayerDialog) {
+        EditPlayerPanelDialog(onDismiss = { showEditPlayerDialog = false })
+    }
+    // 色彩辅助：与在线播放页共用同一份偏好
+    ColorAssistSync(playerState)
+    // 小窗播放：小窗里隐藏控制层，系统悬浮按钮接管播放/暂停
+    val pip = rememberPlayerPipState(playerState)
+    // 投屏：仅 http(s) 直链可投（本地文件 / content:// 转出来的缓存文件电视拿不到）
+    var showCastSheet by remember { mutableStateOf(false) }
+    var castingDevice by remember { mutableStateOf<com.example.tuanyingshi.ui.player.cast.CastDevice?>(null) }
+    val castableUrl = (playUrl ?: uri).takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    val scope = rememberCoroutineScope()
+    val screenshotEnabled by PlayerEnhancementPrefs.screenshotEnabled.collectAsStateWithLifecycle()
+    val framePreviewEnabled by PlayerEnhancementPrefs.framePreviewEnabled.collectAsStateWithLifecycle()
+    val statsEnabled by PlayerEnhancementPrefs.statsEnabled.collectAsStateWithLifecycle()
+    // 截图落盘位置：保存到「用户选择的下载目录 /img」，并在此发状态栏通知。
+    DisposableEffect(playerState) {
+        playerState.screenshotDirProvider = { resolveScreenshotDir(context) }
+        playerState.onScreenshotSaved = { file, _ -> ScreenshotNotifier.notify(context, file) }
+        onDispose {
+            playerState.screenshotDirProvider = null
+            playerState.onScreenshotSaved = null
+        }
+    }
 
     fun handleBack() {
         if (isFullscreen) playerState.control.setFullscreen(false)
@@ -221,32 +333,105 @@ fun ExternalPlayerScreen(
         }
     }
 
+    // 「只留播放器」= 全屏 或 小窗：小窗里整个 Activity 被缩到两三百 dp，
+    // 下方信息区（文件名 / 路径）既看不清也用不上，还会把画面挤成细条。
+    val playerOnly = isFullscreen || pip.inPip
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
+                .then(if (playerOnly) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
                 .background(Color.Black),
         ) {
-            VideoPlayer(
-                modifier = Modifier.fillMaxSize(),
-                url = playUrl ?: uri, // 已解析为真实文件路径或缓存文件；content/http(s)/m3u8 均可
-                videoPosition = 0L,
-                playerState = playerState,
-                releaseOnDispose = false,
-                onBackPress = { handleBack() },
-                controller = {
-                    VideoPlayerControl(
-                        state = playerState,
-                        title = displayName,
-                        danmakuEnabled = false,
-                        onBackClick = { handleBack() },
+            // 续播：进度读到位前不渲染播放器，保证进入即跳到正确位置
+            if (resumePosition != null) {
+                VideoPlayer(
+                    modifier = Modifier.fillMaxSize(),
+                    url = playUrl ?: uri, // 已解析为真实文件路径或缓存文件；content/http(s)/m3u8 均可
+                    videoPosition = resumePosition ?: 0L,
+                    playerState = playerState,
+                    releaseOnDispose = false,
+                    gestureEnabled = gestureEnabled,
+                    onBackPress = { handleBack() },
+                    controller = {
+                        // 小窗里不渲染控制层
+                        if (!pip.inPip) VideoPlayerControl(
+                            state = playerState,
+                            title = displayName,
+                            danmakuEnabled = false,
+                            screenshotEnabled = screenshotEnabled,
+                            framePreviewEnabled = framePreviewEnabled,
+                            statsEnabled = statsEnabled,
+                            // 「更多」面板：投屏仅 http(s) 直链可用（电视端自己拉流，拿不到本机文件）
+                            moreConfig = PlayerMoreConfig(
+                                onPip = {
+                                    // 先把进度落库：万一进小窗导致页面重建，回来还能从此处续播
+                                    localProgressVm.save(
+                                        resumeKey,
+                                        displayName,
+                                        playerState.player.currentPosition,
+                                        playerState.player.duration,
+                                    )
+                                    if (!pip.enter()) {
+                                        Toast.makeText(context, "当前设备不支持小窗播放", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onCast = if (castableUrl != null) {
+                                    { playerState.hideMoreUi(); showCastSheet = true }
+                                } else {
+                                    null
+                                },
+                                backgroundAudio = backgroundPlay,
+                                onBackgroundAudioChange = { PlaybackPrefs.setBackgroundPlayEnabled(it) },
+                                onFeedback = {
+                                    playerState.hideMoreUi()
+                                    navController.navigate(Screen.Feedback.route)
+                                },
+                                onEditPlayer = {
+                                    playerState.hideMoreUi()
+                                    showEditPlayerDialog = true
+                                },
+                                hiddenItems = hiddenMoreItems,
+                            ),
+                            // 打开设置前先落库当前进度：设置里可改倍速 / 画质增强等影响播放的项，
+                            // 用户也可能从设置页直接返回上级，回来时（或下次进来）从这里续播。
+                            onSettingsClick = {
+                                localProgressVm.save(
+                                    resumeKey,
+                                    displayName,
+                                    playerState.player.currentPosition,
+                                    playerState.player.duration,
+                                )
+                                // 当时正在播放 → 关掉设置回来后自动接着播（断点继播）
+                                if (playerState.isPlaying.value) playerState.resumeOnReturn = true
+                                navController.navigate(Screen.PlaybackSettings.route)
+                            },
+                            onBackClick = { handleBack() },
+                        )
+                    }
+                )
+            }
+            // 续播提示条：进入即跳到进度后，底部居中提示并可一键从头播放
+            if (showResumeBanner && resumePosition != null && !pip.inPip) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 96.dp),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    ResumePlaybackBanner(
+                        positionMs = resumeBannerPosition,
+                        onPlayFromStart = {
+                            playerState.player.seekTo(0)
+                            showResumeBanner = false
+                        },
+                        onDismiss = { showResumeBanner = false },
                     )
                 }
-            )
+            }
         }
 
-        if (!isFullscreen) {
+        if (!playerOnly) {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -286,6 +471,56 @@ fun ExternalPlayerScreen(
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+
+    // 投屏（DLNA）：仅 http(s) 直链可用；成功后暂停本机播放，避免双声道
+    if (showCastSheet) {
+        com.example.tuanyingshi.ui.player.cast.CastDeviceSheet(
+            onDismiss = { showCastSheet = false },
+            activeDeviceName = castingDevice?.name,
+            onStop = {
+                val device = castingDevice
+                castingDevice = null
+                if (device != null) {
+                    scope.launch {
+                        com.example.tuanyingshi.ui.player.cast.DlnaCastManager.stop(device)
+                        Toast.makeText(context, "已停止投屏", Toast.LENGTH_SHORT).show()
+                        // 回到本机续播：投屏时手机暂停在原进度上，直接从那里接着播
+                        playerState.control.play()
+                    }
+                }
+            },
+            onCast = { device ->
+                val url = castableUrl
+                if (url == null) {
+                    Toast.makeText(context, "当前视频无法投屏（需要可访问的网络地址）", Toast.LENGTH_SHORT).show()
+                } else {
+                    scope.launch {
+                        // 续播：把本机当前进度一起推给电视（Play 后补一次 AVTransport Seek）
+                        val startAt = playerState.player.currentPosition
+                        val err = com.example.tuanyingshi.ui.player.cast.DlnaCastManager.cast(
+                            device = device,
+                            videoUrl = url,
+                            title = displayName,
+                            startPositionMs = startAt,
+                        )
+                        if (err == null) {
+                            castingDevice = device
+                            playerState.control.pause()
+                            localProgressVm.save(
+                                resumeKey,
+                                displayName,
+                                startAt,
+                                playerState.player.duration,
+                            )
+                            Toast.makeText(context, "已投屏到「${device.name}」", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "投屏失败：$err", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 

@@ -102,6 +102,19 @@ fun ThemeSettingsContent() {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
+        // 应用了主题套装时：强调色 / 明暗模式默认由套装接管，这里给出「不跟随套装」的开关，
+        // 免得用户在本页调色 / 选模式却看不到效果。
+        if (config.themePackId != null) {
+            PackApplyOptionsCard(
+                packApplied = true,
+                followAccent = config.packFollowAccent,
+                followColorMode = config.packFollowColorMode,
+                onFollowAccentChange = ThemePrefs::setPackFollowAccent,
+                onFollowColorModeChange = ThemePrefs::setPackFollowColorMode,
+                title = "主题套装正在接管配色",
+            )
+            Spacer(Modifier.height(16.dp))
+        }
         // ───────────────── 主题模式 ─────────────────
         GroupLabel("主题")
         Spacer(Modifier.height(12.dp))

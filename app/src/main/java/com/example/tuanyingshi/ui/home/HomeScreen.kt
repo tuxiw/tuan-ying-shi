@@ -1,5 +1,6 @@
 package com.example.tuanyingshi.ui.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +43,9 @@ import com.example.tuanyingshi.ui.home.components.HotAnimeCard
 import com.example.tuanyingshi.ui.home.components.SectionHeader
 import com.example.tuanyingshi.ui.home.components.TopHeader
 import com.example.tuanyingshi.ui.home.hanime1.Hanime1HomeContent
+import com.example.tuanyingshi.ui.components.HeadBgSection
 import com.example.tuanyingshi.ui.navigation.Screen
+import com.example.tuanyingshi.ui.theme.LocalThemePackAssets
 import com.example.tuanyingshi.util.BackendPrefs
 import com.example.tuanyingshi.util.ContentPrefs
 import com.example.tuanyingshi.util.SourceMode
@@ -86,25 +89,50 @@ fun HomeScreen(
         if (cat != state.selectedCategory) viewModel.onCategorySelected(cat)
     }
 
+    // 主题套装顶头图（head_bg）：有则作为首页顶部（头像+搜索框+分类标签）的底图，
+    // 并 edge-to-edge 延伸到状态栏之下；无套装时为 null，顶部保持常规实色外观。
+    val headBg = LocalThemePackAssets.current?.headBg
+
+    // 「实时热度榜」：跳到底部 Tab 的排行榜页。
+    // 导航参数与 BottomNavBar 保持一致（popUpTo 首页 + launchSingleTop + restoreState），
+    // 否则会重复入栈出多个排行榜实例、返回栈变乱、Tab 状态也不复用。
+    val onRankingClick: () -> Unit = {
+        navController.navigate(Screen.Ranking.route) {
+            popUpTo(Screen.Home.route) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    // 「更多」：第二个区块是剧场版内容，跳到首页 pager 的「剧场番组」页看全部。
+    val onMoreClick: () -> Unit = {
+        scope.launch { pagerState.animateScrollToPage(HomeCategory.THEATER.ordinal) }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            Column {
-            TopHeader(
-                query = "",
-                onQueryChange = {},
-                onSearchClick = { navController.navigate(Screen.Search.route) },
-                onHistoryClick = { navController.navigate(Screen.History.route) },
-                onDownloadClick = { navController.navigate(Screen.Downloads.route) },
-                avatarUrl = avatarUrl,
-                onAvatarClick = onAvatarClick,
-            )
-                if (!isHanime1) {
-                    CategoryTabs(
-                        categories = categories,
-                        selectedIndex = pagerState.currentPage,
-                        onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+            // 头图区覆盖「状态栏 + 头像/搜索行 + 分类标签行」整体（参考设计稿）。
+            // 与排期表 / 排行榜共用同一个 HeadBgSection，保证三个主 Tab 顶部观感一致。
+            HeadBgSection(headBg = headBg) {
+                Column {
+                    TopHeader(
+                        query = "",
+                        onQueryChange = {},
+                        onSearchClick = { navController.navigate(Screen.Search.route) },
+                        onHistoryClick = { navController.navigate(Screen.History.route) },
+                        onDownloadClick = { navController.navigate(Screen.Downloads.route) },
+                        avatarUrl = avatarUrl,
+                        onAvatarClick = onAvatarClick,
+                        overImage = headBg != null,
                     )
+                    if (!isHanime1) {
+                        CategoryTabs(
+                            categories = categories,
+                            selectedIndex = pagerState.currentPage,
+                            onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                            overImage = headBg != null,
+                        )
+                    }
                 }
             }
         }
@@ -142,6 +170,8 @@ fun HomeScreen(
                                 state = state,
                                 navController = navController,
                                 columns = homeColumns,
+                                onRankingClick = onRankingClick,
+                                onMoreClick = onMoreClick,
                             )
                             HomeCategory.TV -> CategoryBrowse(
                                 zone = "TV番组",
@@ -175,13 +205,18 @@ fun HomeScreen(
 }
 
 /**
- * 「推荐」分类页内容：顶部轮播图 + 「TV番组」2x2 网格 + 「剧场版」3 列网格。
+ * 「推荐」分类页内容：顶部轮播图 + 第一个区块（TV番组，右侧「实时热度榜」）+ 第二个区块（剧场版，右侧「更多」）。
+ *
+ * @param onRankingClick 「实时热度榜」点击：跳排行榜页。
+ * @param onMoreClick 「更多」点击：跳首页 pager 的「剧场番组」页看全部。
  */
 @Composable
 private fun RecommendContent(
     state: HomeUiState,
     navController: NavController,
     columns: Int,
+    onRankingClick: () -> Unit = {},
+    onMoreClick: () -> Unit = {},
 ) {
     val hideHomeBanner by ContentPrefs.hideHomeBanner.collectAsStateWithLifecycle()
     Column(
@@ -208,6 +243,7 @@ private fun RecommendContent(
             title = state.hotRecommendationsTitle,
             emoji = "💕",
             rightText = "实时热度榜",
+            onRightClick = onRankingClick,
         )
         GridSection(
             items = state.hotRecommendations,
@@ -231,6 +267,7 @@ private fun RecommendContent(
             title = state.hotAnimeTitle,
             emoji = "🤭",
             rightText = "更多",
+            onRightClick = onMoreClick,
         )
         GridSection(
             items = state.hotAnime,

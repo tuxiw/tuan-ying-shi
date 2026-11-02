@@ -28,7 +28,6 @@ enum class SourceMode {
     Girigiri,
     /** 规则/CSS 自定义数据源：由 [SourceRuleRepository] 中的 [SourceRule] 驱动。 */
     Rule,
-    /** Hanime1（hanime1.me）API 资源数据源：专用 API 客户端直连站点、专用解析，与 CSS 规则引擎无关。 */
     Hanime1,
 }
 

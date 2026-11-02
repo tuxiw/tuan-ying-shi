@@ -9,12 +9,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.tuanyingshi.data.local.dao.DownloadDao
 import com.example.tuanyingshi.data.local.dao.FavoriteDao
 import com.example.tuanyingshi.data.local.dao.HistoryDao
+import com.example.tuanyingshi.data.local.dao.LocalProgressDao
 import com.example.tuanyingshi.data.local.dao.RatingDao
 import com.example.tuanyingshi.data.local.dao.UserStatusDao
 import com.example.tuanyingshi.data.local.entity.DownloadEntity
 import com.example.tuanyingshi.data.local.entity.EpisodeEntity
 import com.example.tuanyingshi.data.local.entity.FavoriteEntity
 import com.example.tuanyingshi.data.local.entity.HistoryEntity
+import com.example.tuanyingshi.data.local.entity.LocalPlayProgressEntity
 import com.example.tuanyingshi.data.local.entity.RatingEntity
 import com.example.tuanyingshi.data.local.entity.UserAnimeStatusEntity
 import com.example.tuanyingshi.util.ANIME_DATABASE
@@ -85,6 +87,27 @@ private val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+/**
+ * 7 → 8：新增 local_play_progress 表（本地 / 已下载视频的续播进度，按文件绝对路径主键）。
+ * 与在线观看历史完全独立，避免污染 history_table 且绕开 episode_table 的外键 / 后端耦合。
+ */
+private val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS local_play_progress (
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                last_position INTEGER NOT NULL DEFAULT 0,
+                duration INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(file_path)
+            )
+            """.trimIndent(),
+        )
+    }
+}
+
 @Database(
     entities = [
         FavoriteEntity::class,
@@ -93,8 +116,9 @@ private val MIGRATION_6_7 = object : Migration(6, 7) {
         DownloadEntity::class,
         UserAnimeStatusEntity::class,
         RatingEntity::class,
+        LocalPlayProgressEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -103,6 +127,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
     abstract fun userStatusDao(): UserStatusDao
     abstract fun ratingDao(): RatingDao
+    abstract fun localProgressDao(): LocalProgressDao
 
     companion object {
         @Volatile
@@ -115,7 +140,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     ANIME_DATABASE,
-                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

@@ -14,12 +14,18 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.LoadControl
+import androidx.media3.common.C
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 
 
@@ -61,7 +67,14 @@ internal fun Constraints.resizeForVideo(
     val constraintAspectRatio: Float = (width / height).toFloat()
     val difference = aspectRatio / constraintAspectRatio - 1
 
-    if (kotlin.math.abs(difference) <= MAX_ASPECT_RATIO_DIFFERENCE_FRACTION) {
+    // 只在「自适应」下允许「比例接近就不处理」的短路：
+    // 该短路原本是为了省掉一次合成层，但它会让 4:3 / 16:9 / 满屏 这些档位在
+    // 播放器区域比例≈视频比例时（手机竖屏下播放区固定 16:9、片源也是 16:9，极其常见）
+    // **全部退化成同一个尺寸** —— 用户切来切去画面纹丝不动，就是「调整画面尺寸没效果」。
+    // 这些档位本就应该强制按目标比例出图，所以只对 Fit 保留短路。
+    if (mode == ResizeMode.Fit &&
+        kotlin.math.abs(difference) <= MAX_ASPECT_RATIO_DIFFERENCE_FRACTION
+    ) {
         // 视频比例与屏幕比例十分接近，不处理
         return this
     }
@@ -170,6 +183,56 @@ internal fun mediaItemCreator(url: String): MediaItem {
     return builder.build()
 }
 
+/**
+ * 播放器（视频直链）共用的 OkHttp 客户端：
+ * - 复用单一连接池（keep-alive），避免每次装载片源都新建 OkHttpClient 导致连接无法复用、
+ *   首包建立 TCP/TLS 抖动 —— 这正是「视频有概率无法正常播放」的根因之一；
+ * - 统一的连接/读写超时（比默认 10s 更宽，兼容慢 CDN 与首包慢的 m3u8）；
+ * - 仍走动态 ProxySelector + 代理鉴权，保证与 App 代理设置一致。
+ */
+private val sharedVideoHttpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .proxySelector(PlayerProxySelector)
+        .apply { playerProxyAuthenticator?.invoke()?.let { proxyAuthenticator(it) } }
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .build()
+}
+
+/**
+ * 对网络类错误更「宽容」的加载错误重试策略：
+ * - 提高最小重试次数（默认 3 → 6）：HLS 每个分片都是独立请求，瞬时抖动应自动重试而非直接报错；
+ * - 退避上限从默认 5s 放宽到 8s，更容忍慢首包；
+ * - 5xx 这类瞬时服务端错误（500/502/503/504）**不拉黑**码率/变体：默认策略会对连续失败拉黑变体
+ *   60s~5min，导致整段黑屏或永久跳片，这里改由重试机制消化；其余真实错误（403/404/416 等）沿用默认排除。
+ */
+@OptIn(UnstableApi::class)
+private class NetworkFriendlyLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
+    override fun getMinimumLoadableRetryCount(dataType: Int): Int = 6
+
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        // 复用默认退避逻辑（瞬时 IO 错误才重试、致命错误返回 TIME_UNSET），仅放大上限到 8s。
+        val base = super.getRetryDelayMsFor(loadErrorInfo)
+        return if (base == C.TIME_UNSET) base else base.coerceAtMost(8000L)
+    }
+
+    override fun getFallbackSelectionFor(
+        fallbackOptions: LoadErrorHandlingPolicy.FallbackOptions,
+        loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo
+    ): LoadErrorHandlingPolicy.FallbackSelection? {
+        val e = loadErrorInfo.exception
+        // 5xx 瞬时服务端错误不拉黑变体/分片，交给上面的重试机制；其余（403/404/416 等真实错误）沿用默认排除。
+        if (e is HttpDataSource.InvalidResponseCodeException) {
+            val code = e.responseCode
+            if (code == 500 || code == 502 || code == 503 || code == 504) return null
+        }
+        return super.getFallbackSelectionFor(fallbackOptions, loadErrorInfo)
+    }
+}
+
 @OptIn(UnstableApi::class)
 internal fun mediaSourceCreator(url: String, headers: Map<String, String>, context: Context): MediaSource {
     val mediaItem = mediaItemCreator(url)
@@ -179,12 +242,9 @@ internal fun mediaSourceCreator(url: String, headers: Map<String, String>, conte
         // 远程视频（http/https）走 OkHttpDataSource：
         // - 动态代理选择器每次建连实时读取宿主 App 注入的代理（团影视 ProxyHolder），
         //   保证视频直链（m3u8 / mp4）也遵循 App 内代理设置，改代理后重新播放即生效；
-        // - media3 1.4.1 的 DefaultHttpDataSource 不支持代理，故改用 OkHttpDataSource。
-        val okHttpClient = OkHttpClient.Builder()
-            .proxySelector(PlayerProxySelector)
-            .apply { playerProxyAuthenticator?.invoke()?.let { proxyAuthenticator(it) } }
-            .build()
-        OkHttpDataSource.Factory(okHttpClient)
+        // - media3 1.4.1 的 DefaultHttpDataSource 不支持代理，故改用 OkHttpDataSource；
+        // - 复用 [sharedVideoHttpClient] 的连接池，避免每次播放重建连接、首包抖动。
+        OkHttpDataSource.Factory(sharedVideoHttpClient)
             .setDefaultRequestProperties(headers)
     } else {
         // 本地/共享文件（content://、file:// 等）：OkHttpDataSource 不支持这些 scheme，
@@ -193,11 +253,15 @@ internal fun mediaSourceCreator(url: String, headers: Map<String, String>, conte
         DefaultDataSource.Factory(context)
     }
 
+    // HLS 流必须用 HlsMediaSource，ProgressiveMediaSource 无法解析 m3u8 清单；
+    // 两者都挂上网络友好的重试策略，瞬断/慢首包自动重试而非直接进错误页。
     return if (mediaItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_M3U8) {
-        // HLS 流必须用 HlsMediaSource，ProgressiveMediaSource 无法解析 m3u8 清单
-        HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        HlsMediaSource.Factory(dataSourceFactory)
+            .setLoadErrorHandlingPolicy(NetworkFriendlyLoadErrorPolicy())
+            .createMediaSource(mediaItem)
     } else {
         ProgressiveMediaSource.Factory(dataSourceFactory)
+            .setLoadErrorHandlingPolicy(NetworkFriendlyLoadErrorPolicy())
             .createMediaSource(mediaItem)
     }
 }

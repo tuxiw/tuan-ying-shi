@@ -17,6 +17,7 @@ const val RATING_TABLE = "rating_table"
 const val EPISODE_TABLE = "episode_table"
 const val DOWNLOAD_TABLE = "download_table"
 const val DOWNLOAD_DETAIL_TABLE = "download_detail_table"
+const val LOCAL_PLAY_PROGRESS_TABLE = "local_play_progress"
 
 const val SEARCH_PAGE_SIZE = 10
 

@@ -3,7 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 后台听视频：熄屏后继续播放需要持有唤醒锁 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 投屏（DLNA）：需要接收 SSDP 多播报文来发现局域网内的电视 / 盒子 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 扫码登录：相机扫码所需（Android 6+ 运行时动态申请） -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 应用内更新：安装下载的 APK 所需（Android 8+ 需在设置中为本应用开启「安装未知应用」） -->
@@ -66,12 +71,17 @@
             android:foregroundServiceType="dataSync" />
 
         <!-- 主界面（由启动页跳转而来，不再作为 LAUNCHER） -->
+        <!-- supportsPictureInPicture：小窗播放（画中画）；
+             configChanges 额外声明 smallestScreenSize/screenLayout —— 进入 / 退出小窗时
+             系统会带着这套配置变更回调，不声明会导致 Activity 重建（播放器被销毁、画面中断）。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.Tuanyingshi"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden">
 
             <!-- 支持「用本 App 打开」视频文件 / 链接 -->
             <!-- 方式一：按 MIME 类型匹配（文件管理器通常带 video/* 或 m3u8 类型） -->

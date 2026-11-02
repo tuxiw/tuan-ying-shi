@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -25,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,11 +35,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.ui.components.CenteredMessage
+import com.example.tuanyingshi.ui.components.HeadBgSection
 import com.example.tuanyingshi.ui.components.RankingRowCard
 import com.example.tuanyingshi.ui.components.isExpanded
 import com.example.tuanyingshi.ui.components.isTablet
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.ui.schedule.components.WeekdayBar
+import com.example.tuanyingshi.ui.theme.LocalThemePackAssets
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterialApi::class)
@@ -53,6 +58,10 @@ fun ScheduleScreen(
     // 数据源切换后，主动重新拉取排期数据；同源重复进入不重复加载（去重在 ViewModel 内完成）。
     val sourceId by viewModel.currentSourceId.collectAsStateWithLifecycle()
     LaunchedEffect(sourceId) { viewModel.loadIfSourceChanged() }
+
+    // 主题套装顶头图（head_bg）：与首页头图区保持一致；未应用套装时为 null。
+    val headBg = LocalThemePackAssets.current?.headBg
+    val overImage = headBg != null
 
     // 7 个星期：索引 0..6 对应 weekday 1..7
     val pagerState = rememberPagerState(
@@ -80,23 +89,32 @@ fun ScheduleScreen(
                 .pullRefresh(pullState),
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-            // 顶部置顶标题（页面已在 NavHost 的 padding(innerPadding) 内，
-            // innerPadding 已含状态栏高度，无需再 statusBarsPadding，否则叠加翻倍）
-            Text(
-                text = "排期表",
-                color = MaterialTheme.colorScheme.onBackground,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background),
-                textAlign = TextAlign.Center,
-            )
+            // 顶部头图区（与首页一致）：标题 + 星期切换条垫在 head_bg 之上，
+            // edge-to-edge 铺到状态栏之下；未应用套装时无背景图，外观与之前完全一致。
+            HeadBgSection(headBg = headBg) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // 本路由不吃 NavHost 的状态栏 top padding，故标题必须自己 statusBarsPadding 避让，
+                    // 否则会被状态栏压住。
+                    Text(
+                        text = "排期表",
+                        color = if (overImage) Color.White else MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // 先避让状态栏，再留出一段间距，避免标题紧贴状态栏下沿
+                            .statusBarsPadding()
+                            .padding(top = 8.dp),
+                        textAlign = TextAlign.Center,
+                    )
 
-            WeekdayBar(
-                selectedIndex = pagerState.currentPage,
-                onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
-            )
+                    WeekdayBar(
+                        selectedIndex = pagerState.currentPage,
+                        onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                        overImage = overImage,
+                    )
+                }
+            }
 
             HorizontalPager(
                 state = pagerState,

@@ -6,6 +6,7 @@ import com.example.tuanyingshi.data.local.AppDatabase
 import com.example.tuanyingshi.data.local.dao.DownloadDao
 import com.example.tuanyingshi.data.local.dao.FavoriteDao
 import com.example.tuanyingshi.data.local.dao.HistoryDao
+import com.example.tuanyingshi.data.local.dao.LocalProgressDao
 import com.example.tuanyingshi.data.local.dao.RatingDao
 import com.example.tuanyingshi.data.local.dao.UserStatusDao
 import com.example.tuanyingshi.util.preferences
@@ -49,6 +50,9 @@ object AppModule {
 
     @Provides
     fun providesRatingDao(database: AppDatabase): RatingDao = database.ratingDao()
+
+    @Provides
+    fun providesLocalProgressDao(database: AppDatabase): LocalProgressDao = database.localProgressDao()
 
     @Singleton
     @Provides

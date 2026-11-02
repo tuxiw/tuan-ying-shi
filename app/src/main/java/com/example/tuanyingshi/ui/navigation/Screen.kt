@@ -29,6 +29,8 @@ sealed class Screen(val route: String) {
     object Personalization : Screen("personalization")
     object SplashCoverSettings : Screen("splash_cover_settings")
     object Theme : Screen("theme_settings")
+    /** 主题套装商店：下载并应用 B 站装扮风格主题（需先把资源下载到本地才能使用）。 */
+    object ThemeStore : Screen("theme_store")
     object DataSource : Screen("data_source")
     /** 弹幕源管理：展示并配置弹幕资源（弹弹play 等）。 */
     object DanmakuData : Screen("danmaku_data")
@@ -141,6 +143,11 @@ sealed class Screen(val route: String) {
 
     companion object {
         // 底部 4 项：首页 / 排期表 / 排行榜 / 我的
-        val bottomRoutes = listOf(Home.route, Schedule.route, Ranking.route, Mine.route)
+        // ⚠️ 必须 lazy：companion 的 <clinit> 早于嵌套对象 Home/Schedule/... 的初始化，
+        // 若在此直接引用 Home.route 等，在「类首次初始化发生在访问嵌套对象前」的场景
+        // （如 TuanyingshiTheme 启动期经由 ThemePackAssets.buildAssets 触达 Screen）会 NPE。
+        val bottomRoutes: List<String> by lazy {
+            listOf(Home.route, Schedule.route, Ranking.route, Mine.route)
+        }
     }
 }

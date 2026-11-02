@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.tuanyingshi.data.repository.ContentFilterRepository
 import com.example.tuanyingshi.data.repository.DownloadRepository
+import com.example.tuanyingshi.data.repository.FavoriteRepository
 import com.example.tuanyingshi.data.repository.HistoryRepository
 import com.example.tuanyingshi.domain.model.Anime
 import com.example.tuanyingshi.domain.model.Comment
@@ -80,6 +81,7 @@ class PlayerViewModel @Inject constructor(
     private val historyRepository: HistoryRepository,
     private val downloadRepository: DownloadRepository,
     private val contentFilter: ContentFilterRepository,
+    private val favoriteRepository: FavoriteRepository,
 ) : ViewModel() {
 
     private val detailUrl: String = savedStateHandle.get<String>("detailUrl").orEmpty()
@@ -209,6 +211,13 @@ class PlayerViewModel @Inject constructor(
     val showSourcePicker: StateFlow<Boolean> = _showSourcePicker.asStateFlow()
 
     private var lastPlayPosition: Long = 0L
+
+    /**
+     * 当前集的续播位置（毫秒），进入播放页 / 切集 / 换源时从 episode_table 读取。
+     * 交给 VideoPlayer 的 videoPosition 作为初始 seek 目标，实现「记忆播放」。
+     */
+    private val _resumePosition = MutableStateFlow(0L)
+    val resumePosition: StateFlow<Long> = _resumePosition.asStateFlow()
 
     /**
      * 自动换线路/源状态：记录本次播放上下文中已尝试过（已失败）的线路与源，
@@ -512,7 +521,8 @@ class PlayerViewModel @Inject constructor(
                     matchLog("loadVideo 解析成功 url=${resolved.webVideo.url.take(140)} headers=${resolved.webVideo.headers.size} src=${resolved.webVideo.sourceName} canPlay=${resolved.playable}", DebugLogLevel.INFO)
                     if (resolved.playable) {
                         // 用户选中的这一集已优先匹配到 → 直接组装并播放
-                        commitVideo(episode, index, channelIndex, resolved.webVideo)
+                        val resume = fetchResumePosition(episode.url)
+                        commitVideo(episode, index, channelIndex, resolved.webVideo, resume)
                         // 随后在后台继续匹配剩余集数，命中缓存后切集即瞬时播放
                         prefetchRemaining(episode.url)
                     } else {
@@ -525,21 +535,30 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** 取某集已保存的续播进度（毫秒）；无记录或 <=0 返回 0。记忆播放的核心读取点。 */
+    private suspend fun fetchResumePosition(episodeUrl: String): Long =
+        runCatching { historyRepository.getEpisodePosition(episodeUrl) }.getOrDefault(0L)
+            .takeIf { it > 0L } ?: 0L
+
     /**
      * 把已解析出的 [webVideo] 组装为完整播放上下文并提交给 UI（设置 _video）。
      * 被「优先匹配当前集」与「命中后台缓存直接播放」共用，保证切换集数时上下文一致。
+     * @param resume 本集续播进度（毫秒），由调用方在协程内经 [fetchResumePosition] 取出后传入。
      */
-    private fun commitVideo(episode: Episode, index: Int, channelIndex: Int, webVideo: WebVideo) {
+    private suspend fun commitVideo(episode: Episode, index: Int, channelIndex: Int, webVideo: WebVideo, resume: Long = 0L) {
         _error.value = null
         _autoSwitchingSource.value = false
         _currentChannelIndex.value = channelIndex
         _episodes.value = _channels.value[channelIndex] ?: _episodes.value
+        // 记忆播放：resume 即本集已保存的进度（找不到/<=0 时为 0，从头播放）。
+        // 注意用 episode.url（本集真实地址）查进度，而非详情里的 lastPlayPosition（详情解析永远为 0）。
+        _resumePosition.value = resume
         _video.value = Video(
             title = _anime.value?.title ?: "",
             url = webVideo.url,
             episodeName = episode.name,
             episodeUrl = episode.url,
-            lastPlayPosition = episode.lastPlayPosition,
+            lastPlayPosition = resume,
             currentEpisodeIndex = index,
             episodes = _episodes.value,
             headers = webVideo.headers,
@@ -547,8 +566,8 @@ class PlayerViewModel @Inject constructor(
             sourceName = webVideo.sourceName,
             iconUrl = webVideo.iconUrl,
         )
-        lastPlayPosition = episode.lastPlayPosition
-        matchLog("commitVideo 已组装并播放 url=${_video.value?.url?.take(140)} src=${webVideo.sourceName}", DebugLogLevel.INFO)
+        lastPlayPosition = resume
+        matchLog("commitVideo 已组装并播放 url=${_video.value?.url?.take(140)} src=${webVideo.sourceName} resume=${resume}ms", DebugLogLevel.INFO)
         // 播放量上报：仅后端模式（detailUrl 即后端 animeId）才需要，播放开始即 +1。
         // 失败静默不影响播放；非后端模式（CSS/次元城源）无后端番剧 id，跳过。
         if (BackendPrefs.isBackendMode()) {
@@ -751,11 +770,17 @@ class PlayerViewModel @Inject constructor(
         loadVideo(corresp, targetEps.indexOf(corresp), index, resetAuto)
     }
 
-    /** 播放中（ExoPlayer 报错）触发：开启自动换线路/源则自动尝试，否则交还用户选择资源。 */
-    fun onPlaybackError() {
+    /**
+     * 播放中（ExoPlayer 报错）触发：先把当前进度落库（记忆播放），再走失败处理
+     * （开启自动换线路/源则自动尝试，否则交还用户选择资源）。
+     * @param positionMs 播放器当前进度，由宿主在错误回调里传入。
+     */
+    fun onPlaybackError(positionMs: Long) {
         matchLog("onPlaybackError ExoPlayer 报告播放错误", DebugLogLevel.ERROR)
         val v = _video.value ?: return
-        matchLog("onPlaybackError 当前 url=${v.url.take(140)} episode=${v.episodeName} channel=${_currentChannelIndex.value}", DebugLogLevel.ERROR)
+        matchLog("onPlaybackError 当前 url=${v.url.take(140)} episode=${v.episodeName} channel=${_currentChannelIndex.value} pos=${positionMs}ms", DebugLogLevel.ERROR)
+        // 播放失败也要记住播放位置，下次可续播
+        recordProgress(positionMs)
         onPlaybackFailure("播放出错，请选择其它数据源 / 线路")
     }
 
@@ -883,9 +908,14 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** 记录播放进度（本地观看时长 ≥5s 才写库，与 LaQoo 一致）。 */
-    fun recordProgress(positionMs: Long) {
+    fun recordProgress(positionMs: Long, syncToBackend: Boolean = true) {
         if (positionMs < 5_000) return
         lastPlayPosition = positionMs
+        // 关键：同步更新「本集续播位置」的内存值，而不只是落库。
+        // 从播放页跳到「播放设置」再返回时，NavHost 会把播放页的组合销毁（player 随之释放重建），
+        // 回来时 VideoPlayer 用 resumePosition 作初始 seek —— 若这里不同步，
+        // 拿到的仍是「进页时从数据库读出的旧进度」，表现为「关掉设置后从头开始播」。
+        _resumePosition.value = positionMs
         val v = _video.value ?: return
         val a = _anime.value ?: return
         viewModelScope.launch {
@@ -896,8 +926,21 @@ class PlayerViewModel @Inject constructor(
                 mode = SourceHolder.currentSourceMode,
                 // 当前生效的数据源（换源后同步），浏览历史展示「用的哪个源」
                 sourceName = v.sourceName.ifBlank { _currentSourceName.value },
+                syncToBackend = syncToBackend,
             )
         }
+    }
+
+    /**
+     * 「稍后再看」：把当前番剧加入 / 移出收藏（收藏列表即稍后再看列表）。
+     * @return 操作后是否处于「已收藏」状态；null 表示当前还没有详情数据，无法操作。
+     */
+    suspend fun toggleWatchLater(): Boolean? {
+        val a = _anime.value ?: return null
+        val target = Anime(title = a.title, img = a.img, detailUrl = detailUrl)
+        val wasFavorite = favoriteRepository.isFavorite(detailUrl)
+        favoriteRepository.toggle(target, SourceHolder.currentSourceMode)
+        return !wasFavorite
     }
 
     /** 原地切换集数（当前线路内）：若已被后台预匹配命中则直接播放（瞬时），否则联网解析。 */
@@ -907,7 +950,10 @@ class PlayerViewModel @Inject constructor(
         if (cached != null && cached.url.isNotBlank()) {
             // 后台已匹配到该集 → 直接播放，不再走网络；并继续把其余集数也匹配上
             matchLog("selectEpisode 命中缓存直接播放 ${episode.name}", DebugLogLevel.INFO)
-            commitVideo(episode, index, _currentChannelIndex.value, cached)
+            viewModelScope.launch {
+                val resume = fetchResumePosition(episode.url)
+                commitVideo(episode, index, _currentChannelIndex.value, cached, resume)
+            }
             prefetchRemaining(episode.url)
         } else {
             loadVideo(episode, index, _currentChannelIndex.value)
@@ -1082,7 +1128,8 @@ class PlayerViewModel @Inject constructor(
                 res is Result.Success -> {
                     matchLog("loadVideoByRule 解析成功 url=${res.data.url.take(140)} headers=${res.data.headers.size} src=${res.data.sourceName}", DebugLogLevel.INFO)
                     if (res.data.url.isNotBlank()) {
-                        commitVideo(episode, index, channelIndex, res.data)
+                        val resume = fetchResumePosition(episode.url)
+                        commitVideo(episode, index, channelIndex, res.data, resume)
                         // 换源后同样把该源其余集数放入后台预匹配，保证后续切集瞬时
                         prefetchRemaining(episode.url)
                     } else {

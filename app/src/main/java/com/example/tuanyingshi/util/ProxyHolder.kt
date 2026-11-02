@@ -335,11 +335,14 @@ private object DynamicAppProxySelector : ProxySelector() {
 }
 
 /**
- * 便捷扩展：把当前代理配置（含鉴权）应用到 [okhttp3.OkHttpClient.Builder]。
+ * 便捷扩展：把当前代理配置（含鉴权）与全局 Hosts 覆盖（[AppHosts]）应用到 [okhttp3.OkHttpClient.Builder]。
  * 挂载动态 [ProxySelector]（每次建连实时读取配置）与 [Authenticator]（代理 407 鉴权），
- * 因此客户端即使被缓存为单例，改代理或凭据后也能立即生效。
+ * 以及 [AppHosts]（内置 / 自定义 Hosts 在 OkHttp 层的 DNS 覆盖，默认关闭、实时生效），
+ * 因此客户端即使被缓存为单例，改代理或 Hosts 后也能立即生效。
+ * 这是“网络设置”级别的统一入口——所有走 [applyProxy] 的 OkHttp 客户端都会套用本机 Hosts。
  */
 fun OkHttpClient.Builder.applyProxy(): OkHttpClient.Builder {
+    dns(AppHosts)
     proxySelector(dynamicProxySelector())
     proxyAuthenticator(DynamicProxyAuthenticator)
     return this

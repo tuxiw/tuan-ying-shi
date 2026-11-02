@@ -5,4 +5,13 @@
     <external-files-path
         name="update_downloads"
         path="Download/" />
+    <!-- 应用私有目录下的其它文件（如未自定义下载位置时的截图目录） -->
+    <external-files-path
+        name="app_files"
+        path="." />
+    <!-- 共享存储根目录：用户自定义下载位置下的截图（如 /storage/emulated/0/xxx/img/）
+         需要通过 FileProvider 授权给系统相册 / 图片查看器才能打开 -->
+    <external-path
+        name="external_files"
+        path="." />
 </paths>

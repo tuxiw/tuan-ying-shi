@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
@@ -19,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,6 +70,7 @@ import com.example.tuanyingshi.ui.settings.AboutScreen
 import com.example.tuanyingshi.ui.settings.source_editor.SourceEditorScreen
 import com.example.tuanyingshi.ui.settings.source_editor.SourceAnalysisScreen
 import com.example.tuanyingshi.ui.settings.ThemeSettingsScreen
+import com.example.tuanyingshi.ui.settings.ThemeStoreScreen
 import com.example.tuanyingshi.ui.settings.UpdateDialogHost
 import com.example.tuanyingshi.ui.settings.diagnostics.DiagnosticsScreen
 import com.example.tuanyingshi.ui.settings.debug.DebugScreen
@@ -297,12 +301,32 @@ fun AppNavigation() {
             }
             // 首次启动（未看过引导）时以引导页作为起始页；否则正常从首页进入。
             val startDestination = if (OnboardingPrefs.hasShown()) Screen.Home.route else Screen.Onboarding.route
+            // 「我的」页顶头图 / 首页·排期表·排行榜的 head_bg 头图区都要 edge-to-edge
+            // 铺满屏幕顶部（不给状态栏留空间），故这四个路由不吃状态栏 top padding，
+            // 改由页面自身在内容上 statusBarsPadding 避让
+            // （这样头图能铺到状态栏之下，而头像/搜索框/标题等控件仍不会被状态栏压住）。
+            // 其余页面保持原样，继续依赖 top padding 避让状态栏。
+            val navTopPadding = if (
+                currentRoute == Screen.Mine.route ||
+                currentRoute == Screen.Home.route ||
+                currentRoute == Screen.Schedule.route ||
+                currentRoute == Screen.Ranking.route
+            ) {
+                0.dp
+            } else {
+                innerPadding.calculateTopPadding()
+            }
             NavHost(
                 navController = navController,
                 startDestination = startDestination,
                 modifier = androidx.compose.ui.Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(
+                        start = innerPadding.calculateStartPadding(LocalLayoutDirection.current),
+                        end = innerPadding.calculateEndPadding(LocalLayoutDirection.current),
+                        top = navTopPadding,
+                        bottom = innerPadding.calculateBottomPadding(),
+                    ),
                 // 二级页面（历史/下载/我的各入口/详情/播放等）统一从右侧滑入、返回时向右滑出
                 enterTransition = { slideInHorizontally { it } },
                 exitTransition = { slideOutHorizontally { -it } },
@@ -351,6 +375,7 @@ fun AppNavigation() {
             composable(Screen.ProxySettings.route) { ProxySettingsScreen(navController) }
             composable(Screen.Personalization.route) { PersonalizationScreen(navController) }
             composable(Screen.Theme.route) { ThemeSettingsScreen(navController) }
+            composable(Screen.ThemeStore.route) { ThemeStoreScreen(navController) }
             composable(Screen.SplashCoverSettings.route) { SplashCoverSettingsScreen(navController) }
             composable(Screen.DataSource.route) { DataSourceScreen(navController) }
             composable(Screen.DanmakuData.route) { DanmakuDataScreen(navController) }

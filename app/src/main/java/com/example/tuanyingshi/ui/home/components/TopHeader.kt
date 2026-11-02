@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,6 +42,8 @@ import coil.compose.AsyncImage
  *
  * @param avatarUrl 当前登录用户的头像绝对地址；为空（未登录 / 未设置头像 / 非后端模式）时显示人形图标。
  * @param onAvatarClick 点击头像：由调用方打开左侧「快捷设置」抽屉。
+ * @param overImage 顶部是否有 head_bg 头图做底。为 true 时本行自身不吃底色（透出头图），
+ *   图标 / 搜索框按「图上」配色渲染（白色图标 + 白色胶囊搜索框），保证任意底图上都可读。
  */
 @Composable
 fun TopHeader(
@@ -51,18 +55,20 @@ fun TopHeader(
     onDownloadClick: () -> Unit = {},
     avatarUrl: String? = null,
     onAvatarClick: () -> Unit = {},
+    overImage: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // 头图铺到了状态栏之下（AppNavigation 对首页不再施加状态栏 top padding），
+    // 故内容必须自己 statusBarsPadding 避让，否则头像/搜索框会被状态栏压住。
     Surface(
-        // 与其余页面约定一致：状态栏高度已由 AppNavigation 的 Scaffold innerPadding 提供，
-        // 这里不再 statusBarsPadding（否则顶部会叠加一段空白）。
-        // 背景色与正文统一为 background，消除 surface 与 background 之间的明暗分界线。
-        color = MaterialTheme.colorScheme.background,
+        // overImage 时透出下方头图；否则沿用 background，与正文消除明暗分界线。
+        color = if (overImage) Color.Transparent else MaterialTheme.colorScheme.background,
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -72,14 +78,19 @@ fun TopHeader(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(
+                        if (overImage) Color.White.copy(alpha = 0.22f)
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    )
+                    // 图上时加一圈白色描边，让头像与底图分离、边界清晰
+                    .then(if (overImage) Modifier.border(1.5.dp, Color.White, CircleShape) else Modifier)
                     .clickable { onAvatarClick() },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Person,
                     contentDescription = "头像",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (overImage) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
                 if (avatarUrl != null) {
@@ -93,9 +104,11 @@ fun TopHeader(
             }
 
             // 搜索条（视觉上是只读占位符，点击进入搜索）
+            // 图上时改白色胶囊（参考设计稿），与深色/彩色头图形成强对比，文字用深灰保证可读。
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(18.dp),
+                color = if (overImage) Color.White.copy(alpha = 0.94f)
+                else MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(17.dp),
                 modifier = Modifier
                     .weight(1f)
                     .height(34.dp),
@@ -110,13 +123,15 @@ fun TopHeader(
                     Icon(
                         imageVector = Icons.Filled.Search,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (overImage) Color(0xFF616161)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = if (query.isEmpty()) placeholder else query,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (overImage) Color(0xFF616161)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -130,7 +145,7 @@ fun TopHeader(
                 Icon(
                     imageVector = Icons.Filled.History,
                     contentDescription = "历史",
-                    tint = MaterialTheme.colorScheme.onSurface,
+                    tint = if (overImage) Color.White else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -139,7 +154,7 @@ fun TopHeader(
                 Icon(
                     imageVector = Icons.Filled.Download,
                     contentDescription = "下载",
-                    tint = MaterialTheme.colorScheme.onSurface,
+                    tint = if (overImage) Color.White else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(22.dp),
                 )
             }

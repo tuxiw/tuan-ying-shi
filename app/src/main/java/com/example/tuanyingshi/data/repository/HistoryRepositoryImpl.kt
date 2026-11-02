@@ -26,30 +26,46 @@ class HistoryRepositoryImpl @Inject constructor(private val dao: HistoryDao) : H
         position: Long,
         mode: SourceMode,
         sourceName: String,
+        syncToBackend: Boolean,
     ) {
         // 本地写入（position 为毫秒，本地库原样保存）。
-        val historyId = dao.upsert(HistoryEntity(
-            title = anime.title,
-            imgUrl = anime.img,
-            detailUrl = anime.detailUrl,
-            source = mode.name,
-            sourceName = sourceName,
-            lastEpisodeName = episode.name,
-            lastEpisodeUrl = episode.url,
-        ))
-        dao.insertEpisode(EpisodeEntity(
-            historyId = historyId,
-            name = episode.name,
-            episodeUrl = episode.url,
-            lastPosition = position,
-        ))
-        // 后端模式：上报播放进度（后端要求秒，故毫秒 → 秒）。
-        syncHistory(anime, episode.name, episode.url, (position / 1000).toInt(), mode)
+        // 历史与集进度必须一次写完（见 HistoryDao.recordEpisode 注释）：分两次事务时，
+        // 并发的进度保存会互相把对方的 history_id 顶掉，导致外键约束失败并崩溃。
+        // 写进度属于「锦上添花」，任何残留异常都不该把 App 打挂，故兜底捕获并记日志。
+        runCatching {
+            dao.recordEpisode(
+                history = HistoryEntity(
+                    title = anime.title,
+                    imgUrl = anime.img,
+                    detailUrl = anime.detailUrl,
+                    source = mode.name,
+                    sourceName = sourceName,
+                    lastEpisodeName = episode.name,
+                    lastEpisodeUrl = episode.url,
+                ),
+                episode = EpisodeEntity(
+                    historyId = 0L, // 由事务内按 detail_url 解析出的真实 id 覆盖
+                    name = episode.name,
+                    episodeUrl = episode.url,
+                    lastPosition = position,
+                ),
+            )
+        }.onFailure { e ->
+            android.util.Log.w(
+                "HistoryRepo",
+                "写入观看记录失败：${anime.detailUrl} / ${episode.url}",
+                e,
+            )
+        }
+        // 后端模式：上报播放进度（后端要求秒，故毫秒 → 秒）。周期保存时跳过，避免高频调用。
+        if (syncToBackend) {
+            syncHistory(anime, episode.name, episode.url, (position / 1000).toInt(), mode)
+        }
     }
 
     override suspend fun recordBrowse(anime: Anime, mode: SourceMode, sourceName: String) {
         if (dao.observeExists(anime.detailUrl).first()) return
-        dao.upsert(
+        dao.upsertKeepId(
             HistoryEntity(
                 title = anime.title,
                 imgUrl = anime.img,
@@ -61,6 +77,9 @@ class HistoryRepositoryImpl @Inject constructor(private val dao: HistoryDao) : H
         // 后端模式：同步一条浏览记录（无进度，仅标记看过）。
         syncHistory(anime, null, null, null, mode)
     }
+
+    override suspend fun getEpisodePosition(episodeUrl: String): Long =
+        dao.getEpisodePosition(episodeUrl) ?: 0L
 
     override suspend fun remove(detailUrl: String) {
         dao.delete(detailUrl)

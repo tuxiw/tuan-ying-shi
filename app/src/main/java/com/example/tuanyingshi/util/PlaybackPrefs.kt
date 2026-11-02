@@ -1,6 +1,7 @@
 package com.example.tuanyingshi.util
 
 import com.example.tuanyingshi.TuanyingApp
+import com.lanlinju.videoplayer.LoopMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,7 @@ object PlaybackPrefs {
     private const val KEY_SKIP_DURATION_SECONDS = "playback_skip_duration_seconds"
     private const val KEY_CONTROL_HIDE_SECONDS = "playback_control_hide_seconds"
     private const val KEY_DEFAULT_VIDEO_ASPECT_RATIO = "playback_default_video_aspect_ratio"
+    private const val KEY_LOOP_MODE = "playback_loop_mode"
 
     private val prefs = TuanyingApp.getInstance().preferences
 
@@ -95,6 +97,18 @@ object PlaybackPrefs {
 
     private val _defaultVideoAspectRatio = MutableStateFlow(prefs.getString(KEY_DEFAULT_VIDEO_ASPECT_RATIO, "auto") ?: "auto")
     val defaultVideoAspectRatio: StateFlow<String> = _defaultVideoAspectRatio.asStateFlow()
+
+    /** 循环播放模式（单集循环 / 列表循环 / 不循环），默认不循环。 */
+    private val _loopMode = MutableStateFlow(
+        runCatching { LoopMode.valueOf(prefs.getString(KEY_LOOP_MODE, LoopMode.NONE.name) ?: LoopMode.NONE.name) }
+            .getOrDefault(LoopMode.NONE)
+    )
+    val loopMode: StateFlow<LoopMode> = _loopMode.asStateFlow()
+
+    fun setLoopMode(mode: LoopMode) {
+        prefs.edit().putString(KEY_LOOP_MODE, mode.name).apply()
+        _loopMode.value = mode
+    }
 
     /** 同步读取（供非 Compose 场景使用）。 */
     fun isAutoNextEnabled(): Boolean = _autoNextEpisode.value
@@ -220,6 +234,7 @@ object PlaybackPrefs {
             KEY_DEFAULT_SPEED, KEY_LONG_PRESS_SPEED,
             KEY_ARROW_KEY_SKIP_SECONDS, KEY_SKIP_DURATION_SECONDS,
             KEY_CONTROL_HIDE_SECONDS, KEY_DEFAULT_VIDEO_ASPECT_RATIO,
+            KEY_LOOP_MODE,
         ).forEach { editor.remove(it) }
         editor.apply()
 
@@ -239,6 +254,7 @@ object PlaybackPrefs {
         _skipDurationSeconds.value = 80
         _controlHideSeconds.value = 4
         _defaultVideoAspectRatio.value = "auto"
+        _loopMode.value = LoopMode.NONE
     }
 
     val ALLOWED_VIDEO_ASPECT_RATIOS = setOf("auto", "16:9", "4:3", "full")

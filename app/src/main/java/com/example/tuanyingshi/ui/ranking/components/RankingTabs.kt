@@ -32,8 +32,15 @@ fun RankingTabs(
     categories: List<RankingCategory>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    overImage: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // 图上模式：未选中白色 72%（常规模式沿用 onSurfaceVariant）
+    val unselectedColor = if (overImage) {
+        Color.White.copy(alpha = 0.72f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -52,8 +59,7 @@ fun RankingTabs(
                 Text(
                     text = cat.label,
                     fontSize = 15.sp,
-                    color = if (isSelected) Color.White
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isSelected) Color.White else unselectedColor,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
                 )

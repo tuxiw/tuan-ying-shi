@@ -10,10 +10,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
+import com.example.tuanyingshi.util.theme.ThemePackManager
+import com.example.tuanyingshi.util.theme.ThemePackProperties
 import kotlin.math.pow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.tuanyingshi.util.ThemeMode
@@ -93,15 +97,24 @@ private fun ColorScheme.toAmoled(): ColorScheme = copy(
     inverseSurface = Color(0xFF121212),
 )
 
-/** 依据配置生成最终配色：动态色彩（API 31+）优先，其次强调色，最后 AMOLED 覆盖。 */
+/** 依据配置生成最终配色：主题套装优先，其次动态色彩（API 31+），最后强调色 + AMOLED 覆盖。 */
 @Composable
 internal fun resolveScheme(
     darkTheme: Boolean,
     config: com.example.tuanyingshi.util.ThemeConfig,
+    packProps: ThemePackProperties? = null,
 ): ColorScheme {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val accent = parseColorHex(config.accentHex) ?: TuanyingPink
-    val useDynamic = config.dynamicColor && android.os.Build.VERSION.SDK_INT >= 31
+    // 应用了套装且用户允许「跟随套装强调色」时，强调色优先取套装 color；
+    // 用户关掉该开关（config.packFollowAccent=false）则保留自己的强调色设置。
+    val accent = if (config.packFollowAccent && !packProps?.color.isNullOrBlank()) {
+        parseColorHex(packProps!!.color) ?: TuanyingPink
+    } else {
+        parseColorHex(config.accentHex) ?: TuanyingPink
+    }
+    // 动态色彩只在「没用套装强调色」时生效：用了套装配色就让位（不跟随套装强调色时可用）
+    val packAccentActive = config.packFollowAccent && packProps != null
+    val useDynamic = config.dynamicColor && android.os.Build.VERSION.SDK_INT >= 31 && !packAccentActive
     val scheme = if (useDynamic) {
         if (darkTheme) androidx.compose.material3.dynamicDarkColorScheme(context)
         else androidx.compose.material3.dynamicLightColorScheme(context)
@@ -117,13 +130,30 @@ fun TuanyingshiTheme(
     content: @Composable () -> Unit,
 ) {
     val config by ThemePrefs.config.collectAsStateWithLifecycle()
-    val systemDark = isSystemInDarkTheme()
-    val darkTheme = when (config.mode) {
-        ThemeMode.SYSTEM -> systemDark
-        ThemeMode.DARK -> true
-        ThemeMode.LIGHT -> false
+    val context = LocalContext.current
+    // 当前套装属性（仅在套装 id 变化时重读本地 manifest，开销极小）
+    val packProps = remember(config.themePackId) {
+        config.themePackId?.let { ThemePackManager.currentProperties(context) }
     }
-    val colorScheme = resolveScheme(darkTheme, config)
+    // 套装指定了明暗模式则优先采用（如 color_mode=dark），否则按用户设置。
+    // 用户关掉「跟随套装明暗模式」后完全按自己的 mode（跟随系统 / 暗色 / 亮色）显示。
+    val packDark = if (config.packFollowColorMode) {
+        packProps?.colorMode?.equals("dark", ignoreCase = true)
+    } else {
+        null
+    }
+    val systemDark = isSystemInDarkTheme()
+    val darkTheme = when {
+        packDark != null -> packDark
+        else -> when (config.mode) {
+            ThemeMode.SYSTEM -> systemDark
+            ThemeMode.DARK -> true
+            ThemeMode.LIGHT -> false
+        }
+    }
+    val colorScheme = resolveScheme(darkTheme, config, packProps)
+    // 主题套装图片 / 图标资源（随 themePackId 变化重算，未应用套装时为 null）
+    val assets = rememberThemePackAssets()
 
     // 跟随主题切换状态栏 / 导航栏图标的明暗，避免亮色背景下图标不可见
     val view = LocalView.current
@@ -136,11 +166,16 @@ fun TuanyingshiTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content,
-    )
+    // 主题套装的背景图只在「它所装饰的控件」内部按等比裁剪（ContentScale.Crop）绘制：
+    // 底栏 tail_bg、侧栏/抽屉 side_bg、我的页 head_bg。这里不再叠一层铺满全屏的全局底图——
+    // side_bg 是为窄长侧栏设计的图，拉伸到整屏会严重变形并糊住内容。
+    CompositionLocalProvider(LocalThemePackAssets provides assets) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content,
+        )
+    }
 }
 
 /**
@@ -157,6 +192,10 @@ fun PlayerTheme(
         return
     }
     // 强制深色时状态栏/导航栏图标应保持浅色，避免浅色系统下进播放页图标不可见
+    val context = LocalContext.current
+    val packProps = remember(config.themePackId) {
+        config.themePackId?.let { ThemePackManager.currentProperties(context) }
+    }
     val view = LocalView.current
     SideEffect {
         val window = (view.context as? Activity)?.window
@@ -167,7 +206,7 @@ fun PlayerTheme(
         }
     }
     MaterialTheme(
-        colorScheme = resolveScheme(darkTheme = true, config = config),
+        colorScheme = resolveScheme(darkTheme = true, config = config, packProps = packProps),
         typography = Typography,
         content = content,
     )

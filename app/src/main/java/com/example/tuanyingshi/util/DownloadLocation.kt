@@ -69,6 +69,18 @@ fun resolveDownloadDir(context: Context): File {
     return fallback
 }
 
+/**
+ * 播放器截图保存目录：用户选择的下载目录下的 `img` 子目录。
+ *
+ * 与 [resolveDownloadDir] 同源，因此用户改了下载位置后，截图位置也随之改变；
+ * 未选择 / 解析失败时同样回退到应用私有目录（始终可写，截图不会失败）。
+ */
+fun resolveScreenshotDir(context: Context): File {
+    val dir = File(resolveDownloadDir(context), "img")
+    if (!dir.exists()) runCatching { dir.mkdirs() }
+    return dir
+}
+
 /** content://.../tree/primary:Download/x -> /storage/emulated/0/Download/x */
 private fun treeUriToFilePath(uri: Uri): String? {
     val path = uri.path ?: return null

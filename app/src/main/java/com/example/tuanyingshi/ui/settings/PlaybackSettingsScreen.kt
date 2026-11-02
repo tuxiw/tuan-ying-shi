@@ -33,6 +33,11 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +68,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.example.tuanyingshi.ui.navigation.Screen
 import com.example.tuanyingshi.util.PlaybackPrefs
+import com.example.tuanyingshi.util.PlayerEnhancementPrefs
+import com.lanlinju.videoplayer.enhancement.VideoEnhancementMode
 
 /**
  * 播放设置页（设置 → 通用 → 播放设置）：
@@ -162,6 +169,57 @@ fun PlaybackSettingsContent(navController: NavController? = null) {
             onClick = { navController.navigate(Screen.DanmakuSettings.route) },
         )
     }
+
+    // ── 视频增强（animeko 风格画质增强 / 截图 / 进度帧预览 / 信息层 / 手势） ──────────
+    Spacer(Modifier.height(8.dp))
+    SectionHeader("视频增强")
+    val enhancementMode by PlayerEnhancementPrefs.enhancementMode.collectAsStateWithLifecycle()
+    EnhancementModeRow(value = enhancementMode)
+    val screenshotEnabled by PlayerEnhancementPrefs.screenshotEnabled.collectAsStateWithLifecycle()
+    SwitchRow(
+        icon = Icons.Filled.PhotoCamera,
+        title = "截图",
+        desc = "播放中抓取当前帧并保存到相册目录",
+        checked = screenshotEnabled,
+        onCheckedChange = { PlayerEnhancementPrefs.setScreenshotEnabled(it) },
+    )
+    val framePreviewEnabled by PlayerEnhancementPrefs.framePreviewEnabled.collectAsStateWithLifecycle()
+    SwitchRow(
+        icon = Icons.Filled.Preview,
+        title = "进度帧预览",
+        desc = "拖动进度条或手势快进时显示目标时间预览",
+        checked = framePreviewEnabled,
+        onCheckedChange = { PlayerEnhancementPrefs.setFramePreviewEnabled(it) },
+    )
+    val statsEnabled by PlayerEnhancementPrefs.statsEnabled.collectAsStateWithLifecycle()
+    SwitchRow(
+        icon = Icons.Filled.Info,
+        title = "播放信息层",
+        desc = "在播放器内显示分辨率 / 码率 / 编码 / 帧率",
+        checked = statsEnabled,
+        onCheckedChange = { PlayerEnhancementPrefs.setStatsEnabled(it) },
+    )
+    val autoEnhancementOptimize by PlayerEnhancementPrefs.autoEnhancementOptimize.collectAsStateWithLifecycle()
+    SwitchRow(
+        icon = Icons.Filled.AutoAwesome,
+        title = "画质增强自动降级",
+        desc = "开启超分后若帧率过低（约低于 20fps），自动降一档并提示；关闭后完全由你手动选择档位",
+        checked = autoEnhancementOptimize,
+        onCheckedChange = { PlayerEnhancementPrefs.setAutoEnhancementOptimize(it) },
+    )
+    // 仅在开启自动降级时显示「下限」设置：控制自动降级最多降到哪一档。
+    if (autoEnhancementOptimize) {
+        val downgradeFloor by PlayerEnhancementPrefs.autoEnhancementDowngradeFloor.collectAsStateWithLifecycle()
+        EnhancementFloorRow(value = downgradeFloor)
+    }
+    val gestureEnabled by PlayerEnhancementPrefs.gestureEnabled.collectAsStateWithLifecycle()
+    SwitchRow(
+        icon = Icons.Filled.TouchApp,
+        title = "手势控制",
+        desc = "滑动调节亮度 / 音量，左右滑动快进快退",
+        checked = gestureEnabled,
+        onCheckedChange = { PlayerEnhancementPrefs.setGestureEnabled(it) },
+    )
 
     // ── 播放行为 ─────────────────────────────────
     Spacer(Modifier.height(8.dp))
@@ -512,6 +570,188 @@ private fun VideoAspectRatioDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = selected == key, onClick = { selected = key })
+                        Spacer(Modifier.width(8.dp))
+                        Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(selected) }) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/** 自动降级下限：可点击 Row 弹出 Radio 选择器（性能模式 / 关闭画质增强）。 */
+@Composable
+private fun EnhancementFloorRow(value: VideoEnhancementMode) {
+    var showDialog by remember { mutableStateOf(false) }
+    val display = when (value) {
+        VideoEnhancementMode.OFF -> "可降至关闭"
+        else -> "性能模式（不自动关闭）"
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showDialog = true }
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "自动降级下限",
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "帧率过低时自动降级到此档为止，避免自动彻底关闭画质增强",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            text = display,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+
+    if (showDialog) {
+        EnhancementFloorDialog(
+            current = value,
+            onDismiss = { showDialog = false },
+            onConfirm = { selected ->
+                PlayerEnhancementPrefs.setAutoEnhancementDowngradeFloor(selected)
+                showDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun EnhancementFloorDialog(
+    current: VideoEnhancementMode,
+    onDismiss: () -> Unit,
+    onConfirm: (VideoEnhancementMode) -> Unit,
+) {
+    val options = listOf(
+        VideoEnhancementMode.PERFORMANCE to "性能模式：质量→性能即停，绝不自动关闭（推荐）",
+        VideoEnhancementMode.OFF to "关闭：必要时一路降到彻底关闭画质增强",
+    )
+    var selected by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自动降级下限") },
+        text = {
+            Column {
+                options.forEach { (mode, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selected = mode }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected == mode, onClick = { selected = mode })
+                        Spacer(Modifier.width(8.dp))
+                        Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(selected) }) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+@Composable
+private fun EnhancementModeRow(value: VideoEnhancementMode) {
+    var showDialog by remember { mutableStateOf(false) }
+    val display = when (value) {
+        VideoEnhancementMode.OFF -> "关闭"
+        VideoEnhancementMode.PERFORMANCE -> "性能（复原）"
+        VideoEnhancementMode.QUALITY -> "质量（复原 + 超分）"
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showDialog = true }
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "画质增强模式",
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "基于 Anime4K 的实时画质增强，开启后可能增加耗电与发热",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            text = display,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+
+    if (showDialog) {
+        EnhancementModeDialog(
+            current = value,
+            onDismiss = { showDialog = false },
+            onConfirm = { selected ->
+                PlayerEnhancementPrefs.setEnhancementMode(selected)
+                showDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun EnhancementModeDialog(
+    current: VideoEnhancementMode,
+    onDismiss: () -> Unit,
+    onConfirm: (VideoEnhancementMode) -> Unit,
+) {
+    val options = listOf(
+        VideoEnhancementMode.OFF to "关闭：原始画面，不做任何处理",
+        VideoEnhancementMode.PERFORMANCE to "性能（复原）：Anime4K CNN-S 复原，开销最低",
+        VideoEnhancementMode.QUALITY to "质量（复原 + 超分）：复原并 2x 超分，画质最佳",
+    )
+    var selected by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("画质增强模式") },
+        text = {
+            Column {
+                options.forEach { (mode, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selected = mode }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected == mode, onClick = { selected = mode })
                         Spacer(Modifier.width(8.dp))
                         Text(text = label, style = MaterialTheme.typography.bodyLarge)
                     }

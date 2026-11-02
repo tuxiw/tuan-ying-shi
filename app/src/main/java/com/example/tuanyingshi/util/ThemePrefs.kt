@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * - [dynamicColor]：动态色彩（Android 12+ 取系统强调色），开启后覆盖手动强调色。
  * - [amoled]：高对比度深色主题，深色模式使用纯黑背景。
  * - [playerForceDark]：播放页始终使用深色主题。
+ * - [packFollowAccent]：应用主题套装时是否**跟随套装强调色**；关闭则保留用户自己的强调色。
+ * - [packFollowColorMode]：应用主题套装时是否**跟随套装明暗模式**（color_mode）；
+ *   关闭则按 [mode]（跟随系统 / 暗色 / 亮色）显示。
  */
 enum class ThemeMode { SYSTEM, DARK, LIGHT }
 
@@ -22,6 +25,12 @@ data class ThemeConfig(
     val dynamicColor: Boolean = false,
     val amoled: Boolean = false,
     val playerForceDark: Boolean = false,
+    /** 当前应用的主题套装 id；null 表示使用内置默认主题。需先下载解压就绪才能设置。 */
+    val themePackId: Int? = null,
+    /** 应用套装时是否跟随套装的强调色（默认 true，保持「用了套装就变强调色」的观感）。 */
+    val packFollowAccent: Boolean = true,
+    /** 应用套装时是否跟随套装的明暗模式（默认 true）。 */
+    val packFollowColorMode: Boolean = true,
 )
 
 object ThemePrefs {
@@ -30,6 +39,9 @@ object ThemePrefs {
     private const val KEY_DYNAMIC = "theme_dynamic_color"
     private const val KEY_AMOLED = "theme_amoled"
     private const val KEY_PLAYER_DARK = "theme_player_force_dark"
+    private const val KEY_THEME_PACK = "theme_pack_id"
+    private const val KEY_PACK_ACCENT = "theme_pack_follow_accent"
+    private const val KEY_PACK_COLOR_MODE = "theme_pack_follow_color_mode"
 
     private val prefs = TuanyingApp.getInstance().preferences
 
@@ -51,6 +63,9 @@ object ThemePrefs {
             dynamicColor = prefs.getBoolean(KEY_DYNAMIC, false),
             amoled = prefs.getBoolean(KEY_AMOLED, false),
             playerForceDark = prefs.getBoolean(KEY_PLAYER_DARK, false),
+            themePackId = prefs.getString(KEY_THEME_PACK, null)?.toIntOrNull(),
+            packFollowAccent = prefs.getBoolean(KEY_PACK_ACCENT, true),
+            packFollowColorMode = prefs.getBoolean(KEY_PACK_COLOR_MODE, true),
         )
     }
 
@@ -89,5 +104,27 @@ object ThemePrefs {
     fun setPlayerForceDark(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_PLAYER_DARK, enabled).apply()
         _config.value = _config.value.copy(playerForceDark = enabled)
+    }
+
+    /** 设置当前主题套装；传 null 恢复内置默认主题。仅持久化 id，资源是否就绪由管理器判定。 */
+    fun setThemePack(id: Int?) {
+        if (id == null) {
+            prefs.edit().remove(KEY_THEME_PACK).apply()
+        } else {
+            prefs.edit().putString(KEY_THEME_PACK, id.toString()).apply()
+        }
+        _config.value = _config.value.copy(themePackId = id)
+    }
+
+    /** 应用套装时是否跟随套装强调色；关闭后使用 [accentHex]（或内置品牌色）。 */
+    fun setPackFollowAccent(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PACK_ACCENT, enabled).apply()
+        _config.value = _config.value.copy(packFollowAccent = enabled)
+    }
+
+    /** 应用套装时是否跟随套装明暗模式；关闭后按 [mode] 显示。 */
+    fun setPackFollowColorMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PACK_COLOR_MODE, enabled).apply()
+        _config.value = _config.value.copy(packFollowColorMode = enabled)
     }
 }

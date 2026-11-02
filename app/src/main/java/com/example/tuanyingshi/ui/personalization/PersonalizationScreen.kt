@@ -106,6 +106,12 @@ fun PersonalizationSettingsContent(navController: NavController) {
         subtitle = "深浅色模式、动态色彩与强调色调色板",
         onClick = { navController.navigate(Screen.Theme.route) },
     )
+    PersonalizationItem(
+        icon = Icons.Filled.Palette,
+        title = "主题套装",
+        subtitle = "下载并应用主题装扮（需先下载资源）",
+        onClick = { navController.navigate(Screen.ThemeStore.route) },
+    )
     // 列表布局：首页 / 详情页列表每行列数。默认按屏幕自适应，手动档则显示固定列数
     val homeAuto by UiPrefs.homeColumnsAuto.collectAsStateWithLifecycle()
     val detailAuto by UiPrefs.detailColumnsAuto.collectAsStateWithLifecycle()
